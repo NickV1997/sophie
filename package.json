@@ -1,0 +1,53 @@
+{
+  "name": "sophie-agent",
+  "version": "0.1.0",
+  "description": "Sophie — a local-first, terminal AI assistant agent. A mini Claude Code powered by your own local model.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "sophie": "./bin/sophie.ts"
+  },
+  "scripts": {
+    "start": "bun run ./bin/sophie.ts",
+    "dev": "bun run --watch ./bin/sophie.ts",
+    "webapp": "bun run ./bin/sophie.ts webapp",
+    "bench": "bun run src/bench/sophie_benchmark.ts",
+    "bench:quick": "bun run src/bench/sophie_benchmark.ts --quick",
+    "bench:gate": "bun run src/bench/gate.ts",
+    "bench:usefulness": "bun run src/bench/usefulness_suite.ts",
+    "bench:gauntlet": "bun run src/bench/runtime_gauntlet.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "capability": "bun run src/bench/capability_suite.ts"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "assistant",
+    "tui",
+    "opentui",
+    "qwen",
+    "local-llm",
+    "terminal"
+  ],
+  "dependencies": {
+    "@opentui/core": "latest",
+    "@opentui/react": "latest",
+    "@radix-ui/react-slot": "^1.3.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.23.0",
+    "next": "^16.2.10",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.7",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.0.0",
+    "autoprefixer": "^10.5.2",
+    "postcss": "^8.5.16",
+    "tailwindcss": "3.4.17",
+    "typescript": "^5.6.0"
+  }
+}
