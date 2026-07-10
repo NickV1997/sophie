@@ -1,0 +1,33 @@
+name: Sophie Benchmark
+
+# This workflow needs a self-hosted runner with a local model server, so it
+# runs only on trusted triggers (schedule + manual). Never add push/pull_request
+# here: on a public repo that would let fork PRs execute code on the runner.
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  quick:
+    if: github.event_name != 'schedule'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run bench --quick --allow-failures
+      - run: bun run bench:gate -- --scope quick --max-drop 0.02
+
+  full:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run bench --allow-failures
+      - run: bun run bench:gate -- --scope full --max-drop 0.02
+

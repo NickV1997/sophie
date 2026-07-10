@@ -1,0 +1,37 @@
+# dependencies
+node_modules/
+
+# secrets & personal config — NEVER commit these
+.env
+.env.*
+!.env.example
+
+# Sophie runtime state: your memories, persona, onboarding flag, TTS cache
+.sophie/
+
+# local Python venv for the TTS sidecar (self-ignoring, but be explicit)
+.tts-venv/
+
+# personal working notes & machine-specific scripts — not part of the project
+SOPHIE_AUDIT.md
+SOPHIE_PLAN_OF_ATTACK.md
+scripts/sync_to_ssd.sh
+
+# build output
+dist/
+.next/
+webapp/.next/
+
+# logs & OS cruft
+*.log
+.DS_Store
+
+# lockfiles we don't ship (this is a Bun project; bun.lock is the source of truth)
+package-lock.json
+bun.lockb
+
+# scratch / generated app artifacts
+scratch/
+
+# Benchmark output
+bench-results/
