@@ -12,7 +12,7 @@ import {
   TOOL_GROUPS,
   toolCatalogBlock,
 } from "../src/tools/groups.ts";
-import { getTool, toolSpecs } from "../src/tools/registry.ts";
+import { getTool, toolSpecs, TOOLS } from "../src/tools/registry.ts";
 
 const allNames = () => toolSpecs().map((s) => s.name);
 
@@ -31,7 +31,7 @@ describe("progressive tool disclosure", () => {
   test("group tool names all exist in the registry", () => {
     for (const g of TOOL_GROUPS) {
       for (const t of g.tools) {
-        expect(getTool(t), `group ${g.name} lists unknown tool ${t}`).toBeDefined();
+        expect(TOOLS.some((tool) => tool.name === t), `group ${g.name} lists unknown tool ${t}`).toBe(true);
       }
     }
   });
@@ -86,6 +86,15 @@ describe("progressive tool disclosure", () => {
     const result = await loadTools.execute({ group: "nope" }, { cwd: process.cwd() });
     expect(result.isError).toBe(true);
     expect(result.content).toContain("coding");
+  });
+
+  test("common model group aliases activate assistant tools", async () => {
+    for (const alias of ["email", "messaging", "calendar"]) {
+      resetToolGroups();
+      const result = await loadTools.execute({ group: alias }, { cwd: process.cwd() });
+      expect(result.isError).toBeUndefined();
+      expect(activeToolGroups().has("assistant")).toBe(true);
+    }
   });
 
   test("dynamic (MCP) groups defer and disclose like built-ins", () => {

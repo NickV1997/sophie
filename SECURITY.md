@@ -19,12 +19,12 @@ By default Sophie is local-first. Outbound network calls only happen for:
 | Feature | Endpoint | When |
 | --- | --- | --- |
 | Model inference | your `SOPHIE_BASE_URL` (localhost by default) | every turn |
-| Approximate location | `http://ip-api.com` (city-level, from your public IP) | **once**, on first run, saved to memory |
+| Approximate location | `http://ip-api.com` (city-level, from your public IP) | only when `SOPHIE_LOCATION_LOOKUP=true`, then once and saved locally |
 | Telegram (optional) | `api.telegram.org` | only if you set `TELEGRAM_BOT_TOKEN` |
 | Web search (optional) | DuckDuckGo, or Tavily/Brave if keys are set | only when the `web_search` tool runs |
 
-The one-time location lookup on first run is best-effort and can be skipped by
-staying offline during the first launch. Everything else is opt-in via `.env`.
+Approximate location lookup is disabled by default. Everything other than local
+model inference is opt-in via `.env` or an explicit tool call.
 
 ## Secrets & personal data
 
@@ -32,8 +32,17 @@ staying offline during the first launch. Everything else is opt-in via `.env`.
   `.env.example` (blank template) is tracked.
 - Your memories, persona, and onboarding state live in `~/.sophie/`, outside the
   repo, and are never pushed.
+- Sophie state files are written atomically with owner-only permissions where
+  supported. They are still plaintext readable by your local account; full-disk
+  encryption and a protected login account remain part of the trust boundary.
+- Web pages, email, Messages, documents, browser content, and MCP responses are
+  treated as untrusted data. Instructions embedded in retrieved content do not
+  grant authority to run tools or disclose information.
 - If a secret is ever exposed, rotate it: Telegram tokens via `@BotFather`
   (`/revoke`), and Tavily/Brave keys from their dashboards.
+- `bun run audit:public` scans tracked and unignored files plus commit metadata
+  for common secret, local-state, and machine-identity leaks. CI runs the same
+  check on every push and pull request.
 
 ## Web app trust model
 
@@ -56,3 +65,12 @@ never take instructions from a stranger.
 
 Please open a private security advisory on the GitHub repository rather than a
 public issue. Include steps to reproduce and the impact you observed.
+
+## Background runtime
+
+The optional macOS daemon uses the same runtime safety gate as interactive
+Sophie. Scheduled and watched content is labeled by source and trust. Private or
+untrusted evidence cannot authorize outward communication. Calls requiring
+approval pause in a durable queue; approval is bound to the exact tool name and
+arguments and is consumed once. Daemon state, queue files, and audit history are
+private to the local account.

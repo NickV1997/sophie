@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { nextCronTime, parseCron } from "../src/agent/scheduler.ts";
 
 describe("cron parsing", () => {
@@ -56,5 +59,20 @@ describe("cron parsing", () => {
     // Next match is Monday the 6th at 00:00 (before the 1st of next month).
     expect(d.getDate()).toBe(6);
     expect(d.getDay()).toBe(1);
+  });
+});
+
+describe("scheduler delivery acknowledgement", () => {
+  test("failed delivery remains due and is retried", () => {
+    const home = mkdtempSync(join(tmpdir(), "sophie-scheduler-"));
+    try {
+      const proc = Bun.spawnSync(["bun", join(import.meta.dir, "fixtures/scheduler-delivery-driver.ts")], {
+        env: { ...process.env, HOME: home },
+      });
+      expect(proc.stderr.toString()).toBe("");
+      expect(proc.exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

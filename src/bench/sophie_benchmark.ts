@@ -28,6 +28,9 @@ import { installGuard, type GuardEvent } from "./guard.ts";
 import { QUESTIONS, type ArtifactCheck, type BenchQuestion, type Complexity } from "./questions.ts";
 import { generateReport, type CaseRecord } from "./report.ts";
 import { buildBenchSummary } from "./summary.ts";
+import { scoreActionQuality, type ActionObservation } from "./action_quality.ts";
+import { getTurnStats } from "../agent/stats.ts";
+import { buildPerformanceSummary } from "./performance.ts";
 
 const TIMEOUT_MS: Record<Complexity, number> = {
   quick: 90_000,
@@ -87,6 +90,7 @@ async function runCase(q: BenchQuestion, sandbox: string, guardEvents: GuardEven
   const toolErrors: { tool: string; message: string }[] = [];
   const agentErrors: string[] = [];
   const toolNameById = new Map<string, string>();
+  const actionById = new Map<string, ActionObservation>();
   let answer = "";
   let toolRounds = 0;
 
@@ -107,14 +111,21 @@ async function runCase(q: BenchQuestion, sandbox: string, guardEvents: GuardEven
           tools.push(call.name);
           toolCalls.push({ name: call.name, args: call.args, summary: call.summary });
           toolNameById.set(call.id, call.name);
+          actionById.set(call.id, { name: call.name, args: call.args, risk: call.risk, approved: call.risk === "safe" });
           toolRounds++;
         },
         onToolResult(id: string, result: ToolResult) {
+          const observation = actionById.get(id);
+          if (observation) observation.succeeded = !result.isError;
           if (result.isError) {
             toolErrors.push({ tool: toolNameById.get(id) ?? "?", message: (result.display ?? result.content ?? "").slice(0, 300) });
           }
         },
-        requestApproval: async (): Promise<ApprovalDecision> => "approve",
+        requestApproval: async (event): Promise<ApprovalDecision> => {
+          const observation = actionById.get(event.id);
+          if (observation) observation.approved = true;
+          return "approve";
+        },
         onError(message: string) {
           agentErrors.push(message.slice(0, 500));
         },
@@ -130,6 +141,8 @@ async function runCase(q: BenchQuestion, sandbox: string, guardEvents: GuardEven
 
   const checks = scoreCase(q, sandbox, { tools, toolErrors, agentErrors, answer, guardEvents, timedOut });
   const ok = checks.every((c) => c.pass);
+  const actionQuality = scoreActionQuality([...actionById.values()], /(?:completed|done|finished|successfully)/i.test(answer));
+  const runtime = getTurnStats();
 
   return {
     id: q.id,
@@ -149,6 +162,9 @@ async function runCase(q: BenchQuestion, sandbox: string, guardEvents: GuardEven
     checks,
     answerChars: answer.replace(/\s+/g, " ").trim().length,
     answerPreview: answer.replace(/\s+/g, " ").trim().slice(0, 400),
+    falseAction: actionQuality.falseAction,
+    actionQuality: { unauthorizedActions: actionQuality.unauthorizedActions, duplicateActions: actionQuality.duplicateActions, falseCompletions: actionQuality.falseCompletions, failedActions: actionQuality.failedActions },
+    runtime: { promptTokens: runtime.promptTokens, modelRequests: runtime.modelRequests ?? 0, ...(runtime.firstTokenMs !== undefined ? { firstTokenMs: runtime.firstTokenMs } : {}) },
   };
 }
 
@@ -336,6 +352,7 @@ async function main() {
 
   const summary = buildBenchSummary(records, { model: config.model, baseUrl: config.baseUrl });
   writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
+  writeFileSync(join(outDir, "performance.json"), JSON.stringify(buildPerformanceSummary(records, config.model), null, 2));
 
   if (!parseArgs(process.argv.slice(2)).noReport) {
     const report = generateReport(records, summary);

@@ -37,4 +37,25 @@ describe("deterministic tool routing", () => {
       arguments: { expression: "0.175*2480" },
     });
   });
+
+  test("routes exact simple file creation and schedule queries", () => {
+    const fileIntent: any = { expectedTools: ["write_file"] };
+    expect(deterministicToolCallForInput("Create a file called hello.txt containing the text 'Hello Sophie'.", fileIntent)).toMatchObject({ name: "write_file", arguments: { path: "hello.txt", content: "Hello Sophie" } });
+    const scheduleIntent: any = { expectedTools: ["schedule_list"] };
+    expect(deterministicToolCallForInput("What scheduled jobs or reminders do I currently have?", scheduleIntent)?.name).toBe("schedule_list");
+  });
+
+  test("fills missing real-world briefing sources deterministically", () => {
+    const input = "Review today's calendar, unread email, and recent messages";
+    const intent = classifyTurnIntent(input, noState);
+    expect(deterministicToolCallForMissingInput(input, intent, new Set())?.name).toBe("email");
+    expect(deterministicToolCallForMissingInput(input, intent, new Set(["email"]))?.name).toBe("apple");
+    expect(deterministicToolCallForMissingInput(input, intent, new Set(["email", "apple"]))?.name).toBe("calendar_list");
+  });
+
+  test("does not turn draft requests into inbox reads", () => {
+    const input = "Draft an email to Dana but do not send it";
+    const intent = classifyTurnIntent(input, noState);
+    expect(deterministicToolCallForMissingInput(input, intent, new Set())).toBeNull();
+  });
 });

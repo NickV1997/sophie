@@ -12,7 +12,7 @@ import {
   updateEvent,
   type CalendarEvent,
 } from "../calendar/store.ts";
-import { calendarSyncStatus, syncCalendarEvent } from "../calendar/sync.ts";
+import { calendarSyncStatus, reconcileFromAppleCalendar, syncCalendarEvent } from "../calendar/sync.ts";
 import type { Tool } from "./types.ts";
 
 function renderEvent(e: CalendarEvent): string {
@@ -141,9 +141,10 @@ export const calendar: Tool = {
     if (action === "search") return `search "${a.query ?? ""}"`;
     return a.id ? `${action} ${a.id}` : `${action} ${a.range ?? ""}`.trim();
   },
-  risk: () => "safe",
+  risk: (a) => ["add", "update", "cancel", "sync"].includes(String(a.action)) ? "caution" : "safe",
   async execute(args) {
     const action = String(args.action ?? "list");
+    if (["list", "search", "find_free"].includes(action)) await reconcileFromAppleCalendar();
 
     if (action === "list") {
       const win = resolveWindow(args);
@@ -220,6 +221,13 @@ export const calendar: Tool = {
         end = start + duration;
       } else if (Number(args.duration_minutes) > 0) {
         end = existing.start + Number(args.duration_minutes) * 60_000;
+      }
+
+      // Match the webapp rule: an event already on a past day may be edited in
+      // place, but nothing can be moved onto a day that has already passed.
+      const dayStart = (ms: number) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime();
+      if (start != null && dayStart(start) < dayStart(Date.now()) && dayStart(start) !== dayStart(existing.start)) {
+        return { content: `Start "${args.start}" lands on ${fmtDay(start)}, which has already passed. Events can't be moved to a past day — double-check the date.`, isError: true };
       }
 
       const ev = updateEvent(id, {

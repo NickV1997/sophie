@@ -1,6 +1,13 @@
 import { config } from "../config.ts";
+import { NativeToolCallAccumulator } from "./native-tool-calls.ts";
 
 let activeModel = config.model;
+
+/** Model id currently selected after startup discovery. Tool-protocol
+ * selection uses this rather than trusting a possibly stale configured id. */
+export function getActiveModel(): string {
+  return activeModel;
+}
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -254,6 +261,7 @@ export async function* streamChat(
   // that pass raw text through, reasoning_content never appears and this is
   // a no-op.
   let inReasoning = false;
+  const nativeToolCalls = new NativeToolCallAccumulator();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -269,11 +277,14 @@ export async function* streamChat(
       const data = line.slice(5).trim();
       if (data === "[DONE]") {
         if (inReasoning) yield "</think>";
+        const calls = nativeToolCalls.render();
+        if (calls) yield calls;
         return;
       }
       try {
         const json = JSON.parse(data);
         const delta = json.choices?.[0]?.delta ?? {};
+        nativeToolCalls.push(delta.tool_calls);
         const reasoning: string | undefined = delta.reasoning_content;
         if (reasoning) {
           if (!inReasoning) {

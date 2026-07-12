@@ -16,6 +16,12 @@
     "bench:gate": "bun run src/bench/gate.ts",
     "bench:usefulness": "bun run src/bench/usefulness_suite.ts",
     "bench:gauntlet": "bun run src/bench/runtime_gauntlet.ts",
+    "bench:repeat": "bun run src/bench/repeat.ts",
+    "bench:model-gate": "bun run src/bench/model_gate.ts",
+    "bench:performance-gate": "bun run src/bench/performance_gate.ts",
+    "bench:real-world": "bun run src/bench/real_world_entry.ts",
+    "bench:real-world:smoke": "bun run src/bench/real_world_entry.ts --scenario maya-founder-week --max-turns 2 --allow-failures",
+    "audit:public": "bun run scripts/audit-public.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "capability": "bun run src/bench/capability_suite.ts"
@@ -49,5 +55,8 @@
     "postcss": "^8.5.16",
     "tailwindcss": "3.4.17",
     "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.16"
   }
 }

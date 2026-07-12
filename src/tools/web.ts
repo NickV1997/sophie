@@ -1,5 +1,6 @@
 import { fetchWithTimeout } from "../system/net.ts";
 import type { Tool } from "./types.ts";
+import { getSecret } from "../system/secrets.ts";
 
 const MAX_TEXT = 12_000;
 
@@ -122,7 +123,7 @@ async function duckduckgoSearch(query: string, signal?: AbortSignal): Promise<Se
 
 /** Tavily (preferred) → Brave (if keyed) → keyless DuckDuckGo. */
 async function search(query: string, signal?: AbortSignal): Promise<{ hits: SearchHit[]; via: string }> {
-  const tavily = process.env.TAVILY_API_KEY?.trim();
+  const tavily = getSecret("TAVILY_API_KEY");
   if (tavily) {
     const res = await fetchWithTimeout("https://api.tavily.com/search", {
       method: "POST",
@@ -139,7 +140,7 @@ async function search(query: string, signal?: AbortSignal): Promise<{ hits: Sear
     };
   }
 
-  const brave = process.env.BRAVE_API_KEY?.trim();
+  const brave = getSecret("BRAVE_API_KEY");
   if (brave) {
     const res = await fetchWithTimeout(
       `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=6`,

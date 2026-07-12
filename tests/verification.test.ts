@@ -2,10 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { addJournalEntry, beginObjective, clearTasks, setTasks, type JournalEntry } from "../src/agent/tasks.ts";
 import { updateTasks } from "../src/tools/tasks.ts";
-import { hasVerifierEvidence, lastFailedVerifier, missingVerifierMessage } from "../src/agent/verification.ts";
+import { hasVerifierEvidence, lastFailedVerifier, missingVerifierMessage, needsVerifierEvidence } from "../src/agent/verification.ts";
 import { verifyNextApp, verifyPackageInstall, verifyProject, verifyPythonProject, verifyStaticSite } from "../src/tools/verify.ts";
 
 afterEach(() => clearTasks());
+
+test("everyday plans do not require a coding verifier", () => {
+  expect(needsVerifierEvidence({ content: "Build a practical workday plan", status: "active" }, [{ content: "Review calendar and inbox", status: "completed" }])).toBe(false);
+  expect(needsVerifierEvidence({ content: "Build a Python CLI app", status: "active" }, [])).toBe(true);
+});
 
 function entry(p: Partial<JournalEntry> & { kind: JournalEntry["kind"]; summary: string }): JournalEntry {
   return { id: Math.random().toString(36).slice(2), at: Date.now(), ...p };

@@ -4,8 +4,8 @@
  * points at a throwaway dir (see tests/calendar.test.ts). Prints PASS/FAIL
  * lines and exits non-zero on any failure.
  */
-import { listSchedule } from "../../src/agent/scheduler.ts";
-import { calendarForPrompt } from "../../src/calendar/store.ts";
+import { listSchedule, setScheduleEnabled } from "../../src/agent/scheduler.ts";
+import { calendarForPrompt, reconcileCalendarReminders, upsertExternalEvent, searchEvents } from "../../src/calendar/store.ts";
 import { calendar } from "../../src/tools/calendar.ts";
 
 let failures = 0;
@@ -34,6 +34,10 @@ const add1 = await run({
 check("add ok", !add1.isError && add1.content.includes("Team sync"), add1.content);
 const id1 = add1.content.match(/cal-[a-z0-9-]+/)?.[0] ?? "";
 check("add created 2 scheduler reminders", listSchedule().length === 2);
+const brokenReminder = listSchedule()[0];
+if (brokenReminder) setScheduleEnabled(brokenReminder.id, false);
+const repaired = reconcileCalendarReminders();
+check("startup reconciliation repairs missing reminders", repaired.repairedEvents === 1 && listSchedule().filter((i) => i.title.includes("Team sync")).length === 2);
 
 const past = await run({ action: "add", title: "Old", start: "2020-01-01 10:00" });
 check("past start refused", past.isError === true);
@@ -71,5 +75,9 @@ check("prompt agenda includes upcoming event", prompt.includes("Overlap") && pro
 
 const badTime = await run({ action: "add", title: "X", start: "whenever" });
 check("bad start errors cleanly", badTime.isError === true);
+
+upsertExternalEvent({ appleId: "apple-test-1", title: "Imported Apple event", start: day.getTime(), end: day.getTime() + 3_600_000 });
+upsertExternalEvent({ appleId: "apple-test-1", title: "Imported Apple event updated", start: day.getTime(), end: day.getTime() + 3_600_000 });
+check("Apple import upserts by provider id without duplicates", searchEvents("Imported Apple").length === 1 && searchEvents("updated").length === 1);
 
 process.exit(failures ? 1 : 0);

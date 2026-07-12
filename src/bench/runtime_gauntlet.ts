@@ -128,7 +128,7 @@ const STRESS_PAD = [
 export const RUNTIME_GAUNTLET_CHATS: GauntletChat[] = [
   {
     id: "memory-depth",
-    persona: "Nick — runtime optimizer",
+    persona: "Avery — runtime optimizer",
     personaBio: "Focused on Sophie itself; cares about built-in tools, memory quality, and evidence after a long conversation.",
     turns: [
       {

@@ -28,7 +28,7 @@ function ttsHost(): string {
 }
 
 function modelDir(): string {
-  return process.env.SOPHIE_MODEL_DIR || join(homedir(), "Desktop/local_models");
+  return process.env.SOPHIE_MODEL_DIR || join(homedir(), ".local/share/sophie/models");
 }
 
 function pythonPath(): string {

@@ -1,5 +1,5 @@
 import {
-  ASSISTANT_TASKS_PATH,
+  assistantTasksPath,
   addAssistantTask,
   deleteAssistantTask,
   searchAssistantTasks,
@@ -128,7 +128,7 @@ export const manageTasks: Tool = {
         project: text(args.project),
       });
       return {
-        content: `Added long-term task in ${displayPath(ASSISTANT_TASKS_PATH)}:\n${renderTask(task)}`,
+        content: `Added long-term task in ${displayPath(assistantTasksPath())}:\n${renderTask(task)}`,
         display: `added ${task.id}`,
       };
     }
@@ -181,8 +181,8 @@ export const manageTasks: Tool = {
     });
     return {
       content: list.length
-        ? `Long-term tasks (${displayPath(ASSISTANT_TASKS_PATH)}):\n${list.map(renderTask).join("\n")}`
-        : `No matching long-term tasks in ${displayPath(ASSISTANT_TASKS_PATH)}.`,
+        ? `Long-term tasks (${displayPath(assistantTasksPath())}):\n${list.map(renderTask).join("\n")}`
+        : `No matching long-term tasks in ${displayPath(assistantTasksPath())}.`,
       display: `${list.length} task${list.length === 1 ? "" : "s"}`,
     };
   },

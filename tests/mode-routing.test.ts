@@ -30,6 +30,7 @@ describe("involvesCoding", () => {
   test("false for non-coding or read-only requests", () => {
     expect(involvesCoding("what's the weather")).toBe(false);
     expect(involvesCoding("list the files in this folder")).toBe(false);
+    expect(involvesCoding("Create a Carter Renovation project, add Jamie as stakeholder, and add a task")).toBe(false);
   });
 });
 
@@ -51,6 +52,13 @@ describe("auto-routing (build vs plan)", () => {
     expect(shouldAutoPlan("normal", intent, input)).toBe(false);
   });
 
+  test("an explicit plan-only coding request enters PLAN without auto-building", () => {
+    const input = "Create an implementation plan for a Python CLI, but do not write code yet";
+    const intent = intentFor(input);
+    expect(shouldAutoBuild("normal", intent, input)).toBe(false);
+    expect(shouldAutoPlan("normal", intent, input)).toBe(true);
+  });
+
   test("does not override an explicit plan/build mode", () => {
     expect(shouldAutoBuild("build", intentFor("build an app"), "build an app")).toBe(false);
     expect(shouldAutoBuild("plan", intentFor("build an app"), "build an app")).toBe(false);
@@ -66,5 +74,10 @@ describe("auto-routing (build vs plan)", () => {
   test("does not route a greeting / simple chat", () => {
     expect(shouldAutoBuild("normal", intentFor("hey how's it going"), "hey how's it going")).toBe(false);
     expect(shouldAutoPlan("normal", intentFor("hey how's it going"), "hey how's it going")).toBe(false);
+  });
+
+  test("an everyday workday plan stays in normal assistant mode", () => {
+    const input = "Check my calendar and inbox, then build me a practical workday plan";
+    expect(shouldAutoPlan("normal", intentFor(input), input)).toBe(false);
   });
 });

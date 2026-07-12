@@ -5,9 +5,12 @@
  * Each delegate has a person, topic, instruction, channel, and optional cron
  * schedule. When a delegate fires, Sophie drafts and sends an update.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { memoryHomeDir } from "../memory/facts.ts";
+import { cancelSchedule } from "./scheduler.ts";
+import { writePrivateFileAtomic } from "../system/atomic-file.ts";
+import { findEntities, linkEntities, upsertEntity } from "../system/entities.ts";
 
 export interface DelegateRecord {
   id: string;          // del_<base36><random>
@@ -22,6 +25,7 @@ export interface DelegateRecord {
   lastSent: number | null;
   enabled: boolean;
   createdAt: number;
+  lastDelivery?: { at: number; channel: string; recipient: string; contentHash: string; approvalSource: string; result: string };
 }
 
 function storePath(): string {
@@ -56,7 +60,7 @@ function readAll(): DelegateRecord[] {
 
 function writeAll(records: DelegateRecord[]): void {
   ensureDir();
-  writeFileSync(
+  writePrivateFileAtomic(
     storePath(),
     records.map((r) => JSON.stringify(r)).join("\n") + (records.length ? "\n" : ""),
   );
@@ -94,6 +98,11 @@ export function addDelegate(
   };
   records.push(record);
   writeAll(records);
+  const entity = upsertEntity("delegation", record.id, record.title, [record.person, record.topic]);
+  const person = findEntities(record.person, "person").find((item) =>
+    item.name.toLowerCase() === record.person.toLowerCase() ||
+    item.aliases.some((alias) => alias.toLowerCase() === record.person.toLowerCase()));
+  if (person) linkEntities(entity.id, person.id, "assigned_to_person");
   return record;
 }
 
@@ -103,16 +112,18 @@ export function cancelDelegate(id: string): boolean {
   const rec = records.find((d) => d.id === id);
   if (!rec) return false;
   rec.enabled = false;
+  if (rec.scheduleId) cancelSchedule(rec.scheduleId);
   writeAll(records);
   return true;
 }
 
 /** Update lastSent to now. */
-export function updateDelegateSent(id: string): boolean {
+export function updateDelegateSent(id: string, delivery?: DelegateRecord["lastDelivery"]): boolean {
   const records = readAll();
   const rec = records.find((d) => d.id === id);
   if (!rec) return false;
   rec.lastSent = Date.now();
+  if (delivery) rec.lastDelivery = delivery;
   writeAll(records);
   return true;
 }

@@ -17,7 +17,10 @@ import { ensureMigrated } from "./facts.ts";
  */
 export type MemoryScope = "user" | "project";
 
-export const MEMORY_DIR = join(homedir(), ".sophie");
+/** Respects SOPHIE_HOME when set before process startup (tests, benchmarks,
+ * portable profiles). Never fall back to the real profile when isolation was
+ * explicitly requested. */
+export const MEMORY_DIR = process.env.SOPHIE_HOME ? join(process.env.SOPHIE_HOME, ".sophie") : join(homedir(), ".sophie");
 export const USER_MEMORY = join(MEMORY_DIR, "SOPHIE.md");
 
 /** Chars of persona we inline before truncating — kept tight on purpose. */

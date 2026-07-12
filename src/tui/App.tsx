@@ -49,6 +49,7 @@ import { completeAppleReminder } from "../channels/apple_reminders.ts";
 import { notifyUser } from "../channels/notify.ts";
 import { StreamingSpeech } from "../channels/streaming_speech.ts";
 import { startScheduler, type ScheduleItem } from "../agent/scheduler.ts";
+import { reconcileCalendarReminders } from "../calendar/store.ts";
 import { calendarSyncStatus, syncUpcomingCalendarEvents } from "../calendar/sync.ts";
 import { startWatchers } from "../agent/watcher.ts";
 import {
@@ -62,6 +63,8 @@ import { subscribeMcpStatus } from "../mcp/status.ts";
 import { runDoctor } from "../system/doctor.ts";
 import { undoLast } from "../system/undo.ts";
 import { checkForUpdate } from "../system/update.ts";
+import { readDaemonStatus } from "../daemon/service.ts";
+import { listWork } from "../daemon/queue.ts";
 import { memoryPath, type MemoryScope, readMemoryFile, writeMemoryFile } from "../memory/store.ts";
 import { displayPath } from "../system/paths.ts";
 import { isSetupComplete, scanAndRememberMachine } from "../system/onboarding.ts";
@@ -99,7 +102,7 @@ interface PendingApproval {
 
 /** Where a turn came from — local terminal, a Telegram message, or a fired schedule.
  *  Remote/scheduled turns mirror Sophie's reply back over Telegram. */
-type RunOpts = { source: "user" | "telegram" | "schedule"; mirror?: boolean };
+type RunOpts = { source: "user" | "telegram" | "schedule" | "watcher"; mirror?: boolean };
 
 interface SlashCommand {
   name: string;
@@ -343,18 +346,33 @@ export function App({ modelDetail }: { modelDetail: string }) {
   useEffect(() => subscribeMode(setModeState), []);
   // Live context-fill / generation-speed readout for the status line.
   useEffect(() => subscribeTurnStats(setTurnStats), []);
-  // On launch, hint if there's a session to resume.
+  // On launch, restore the latest session for this working directory. Sophie
+  // still does no work while closed; this only restores the conversation and
+  // live objective so the user can continue naturally after restarting.
   useEffect(() => {
-    const s = latestSession(cwd) ?? latestSession();
-    if (s) {
-      setBlocks((prev) =>
-        prev.length
-          ? prev
-          : [{ id: nid(), kind: "system", text: `You have a saved session: "${s.title}". Type /resume to continue it.` }],
-      );
-    }
+    const s = latestSession(cwd);
+    if (!s) return;
+    sessionId.current = s.id;
+    setCurrentSessionId(s.id);
+    agent.restoreHistory(s.history);
+    restoreCurrentJob(s.job);
+    restoreTasks(s.tasks);
+    restoreJournal(s.journal);
+    setObjective(s.objective ?? null);
+    setModeStore(s.mode);
+    const restored = (s.blocks as Block[]).map((b) => ({ ...b, id: nid() }));
+    const open = s.tasks.filter((task) => task.status !== "completed").length;
+    setBlocks([
+      ...restored,
+      {
+        id: nid(),
+        kind: "system",
+        text: `Restored "${s.title}" after restart.${open ? ` ${open} task${open === 1 ? "" : "s"} remain open; use /continue when you want Sophie to proceed.` : ""}`,
+      },
+    ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
 
   // First run: scan the machine + approximate location once and remember them,
   // so Sophie always knows what computer she's on. Best-effort, in background.
@@ -364,6 +382,14 @@ export function App({ modelDetail }: { modelDetail: string }) {
 
   // ── transcript helpers ────────────────────────────────────────────────
   const add = useCallback((b: Block) => setBlocks((prev) => [...prev, b]), []);
+  useEffect(() => {
+    const daemon = readDaemonStatus();
+    const online = daemon?.state === "online" && Date.now() - daemon.heartbeatAt < 45_000;
+    const waiting = listWork().filter((item) => item.status === "awaiting_approval");
+    add({ id: nid(), kind: "system", text: online
+      ? `Background Sophie online (pid ${daemon!.pid}).${waiting.length ? ` ${waiting.length} task${waiting.length === 1 ? "" : "s"} waiting for approval; ask me to list background work.` : ""}`
+      : "Background Sophie is offline. Use `sophie daemon install` then `sophie daemon start` to enable continuous reminders and queued work." });
+  }, [add]);
   const closeSetup = useCallback(
     (summary: string) => {
       setSetup(null);
@@ -412,6 +438,14 @@ export function App({ modelDetail }: { modelDetail: string }) {
 
   // Scheduler: fired reminders notify the user; fired "run" jobs wake Sophie.
   useEffect(() => {
+    const repaired = reconcileCalendarReminders();
+    if (repaired.repairedEvents) {
+      add({
+        id: nid(),
+        kind: "system",
+        text: `Restart recovery: repaired ${repaired.createdReminders} upcoming reminder${repaired.createdReminders === 1 ? "" : "s"} across ${repaired.repairedEvents} calendar event${repaired.repairedEvents === 1 ? "" : "s"}.`,
+      });
+    }
     const stop = startScheduler((item: ScheduleItem) => {
       if (item.action === "run" && item.prompt) {
         runTurnRef.current(item.prompt, { source: "schedule", mirror: isAway() });
@@ -452,7 +486,7 @@ export function App({ modelDetail }: { modelDetail: string }) {
       const shown = files.slice(0, 10).map(displayPath).join(", ");
       const changed = files.length > 10 ? `${shown} (+${files.length - 10} more)` : shown || item.path;
       if (item.action === "run" && item.prompt) {
-        runTurnRef.current(`${item.prompt}\n\nChanged path(s): ${changed}`, { source: "schedule", mirror: isAway() });
+        runTurnRef.current(`${item.prompt}\n\nChanged path(s): ${changed}`, { source: "watcher", mirror: isAway() });
       } else {
         const body = `${item.message ?? item.title} — ${changed}`;
         add({ id: nid(), kind: "system", text: `⚡ ${item.title}: ${body}` });
@@ -615,6 +649,7 @@ export function App({ modelDetail }: { modelDetail: string }) {
             },
           },
           controller.signal,
+          { source: opts.source },
         );
         // Mirror the final answer back to whoever pinged remotely.
         if (mirror && replyText.trim() && telegramReady()) {
@@ -1628,6 +1663,7 @@ function StatusGauges({ stats }: { stats: TurnStats }) {
   return (
     <text wrapMode="none">
       {tps > 0 ? <span fg={theme.faint}>{`~${tps.toFixed(0)} tok/s  `}</span> : null}
+      {stats.firstTokenMs !== undefined ? <span fg={theme.faint}>{`first ${(stats.firstTokenMs / 1000).toFixed(1)}s  `}</span> : null}
       <span fg={theme.faint}>{"ctx "}</span>
       <span fg={ctxColor}>{`${pct}%`}</span>
     </text>

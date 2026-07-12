@@ -57,10 +57,15 @@ bun install
 cyan "→ Checking Sophie TTS runtime..."
 TTS_VENV="$SCRIPT_DIR/.tts-venv"
 TTS_PY="$TTS_VENV/bin/python"
-TTS_MODEL="${SOPHIE_TTS_MODEL:-$HOME/Desktop/local_models/tts/kokoro-v1.0.onnx}"
-TTS_VOICES="${SOPHIE_TTS_VOICES:-$HOME/Desktop/local_models/tts/voices-v1.0.bin}"
+TTS_MODEL_DIR="${SOPHIE_MODEL_DIR:-$HOME/.local/share/sophie/models}"
+TTS_MODEL="${SOPHIE_TTS_MODEL:-$TTS_MODEL_DIR/tts/kokoro-v1.0.onnx}"
+TTS_VOICES="${SOPHIE_TTS_VOICES:-$TTS_MODEL_DIR/tts/voices-v1.0.bin}"
+TTS_SKIPPED=false
 
-if ! command -v python3 >/dev/null 2>&1; then
+if [[ "${SOPHIE_INSTALL_TTS:-1}" =~ ^(0|false|no|off)$ ]]; then
+  TTS_SKIPPED=true
+  yellow "• Skipping optional TTS runtime (SOPHIE_INSTALL_TTS=${SOPHIE_INSTALL_TTS})."
+elif ! command -v python3 >/dev/null 2>&1; then
   yellow "• python3 is missing; Sophie TTS sidecar cannot be installed yet."
 elif [ ! -x "$TTS_PY" ]; then
   cyan "→ Creating Sophie TTS virtualenv..."
@@ -71,23 +76,24 @@ else
   green "✓ Sophie TTS virtualenv already exists."
 fi
 
-if [ -x "$TTS_PY" ]; then
+if [ "$TTS_SKIPPED" = false ] && [ -x "$TTS_PY" ]; then
   green "✓ Sophie TTS Python: $TTS_PY"
 fi
-if [ -f "$TTS_MODEL" ]; then
+if [ "$TTS_SKIPPED" = false ] && [ -f "$TTS_MODEL" ]; then
   green "✓ Kokoro model: $TTS_MODEL"
-else
+elif [ "$TTS_SKIPPED" = false ]; then
   yellow "• Kokoro model missing: $TTS_MODEL"
 fi
-if [ -f "$TTS_VOICES" ]; then
+if [ "$TTS_SKIPPED" = false ] && [ -f "$TTS_VOICES" ]; then
   green "✓ Kokoro voices: $TTS_VOICES"
-else
+elif [ "$TTS_SKIPPED" = false ]; then
   yellow "• Kokoro voices missing: $TTS_VOICES"
 fi
 
 # 4. .env -----------------------------------------------------------------
 if [ ! -f .env ]; then
   cp .env.example .env
+  chmod 600 .env
   yellow "✓ Created .env from template — edit it to point at your local model."
 else
   green "✓ .env already exists (left untouched)."

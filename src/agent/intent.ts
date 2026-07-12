@@ -95,7 +95,7 @@ export function turnFocusForPrompt(input: string, intent: TurnIntent): string {
 function classifyBaseIntent(input: string): TurnIntent {
   const text = input.toLowerCase().trim();
   if (!text || text.startsWith("/")) return intent("chat", false, false, 0.9);
-  if (/\b(hi|hello|hey|thanks|thank you)\b/.test(text) && text.length < 80) {
+  if (/^(hi|hello|hey|thanks|thank you)[!. ]*$/.test(text) && text.length < 80) {
     return intent("chat", false, false, 0.9);
   }
   if (/\b(continue|resume|keep going|carry on|finish|same task|that task|the task|where you left off)\b/.test(text)) {
@@ -110,8 +110,8 @@ function classifyBaseIntent(input: string): TurnIntent {
 
   const localAction = requiresLocalAction(input);
   const taskLedger = requiresTaskLedger(input);
-  if (taskLedger) return intent("new_job", localAction, true, 0.8);
   const hinted = expectedToolsForInput(text);
+  if (taskLedger) return intent("new_job", localAction, true, 0.8, hinted);
   if (hinted.length) return intent("standalone_action", true, false, 0.8, hinted);
   const quick = quickCheckConfidence(text);
   if (quick > 0) return intent("quick_check", true, false, quick);
@@ -122,7 +122,7 @@ function classifyBaseIntent(input: string): TurnIntent {
 export function requiresLocalAction(input: string): boolean {
   const text = input.toLowerCase();
   if (text.trim().startsWith("/")) return false;
-  if (/\b(hi|hello|hey|thanks|thank you)\b/.test(text) && text.length < 80) return false;
+  if (/^(hi|hello|hey|thanks|thank you)[!. ]*$/.test(text) && text.length < 80) return false;
   return (
     /\b(read|inspect|check|look at|look up|find|search|research|study|compare|audit|review)\b/.test(text) ||
     /\b(fix|change|edit|update|add|remove|delete|create|build|scaffold|implement|recode|rewrite|make)\b/.test(text) ||
@@ -130,7 +130,7 @@ export function requiresLocalAction(input: string): boolean {
     /\b(ask me|ask the user|ask for|tell me first|before doing anything|let me know on my phone|on my phone|notify me|send me a notification)\b/.test(text) ||
     /\b(today'?s date|day of the week|what time|current time|right now|days? until|new year'?s day)\b/.test(text) ||
     (/\b(calculate|calculator|compute|standard deviation|average|mean|percent|percentage|square root|fahrenheit|celsius|seconds?|minutes?|hours?)\b/.test(text) || /\d+\s*[%*/+-]/.test(text)) ||
-    /\b(remember that|save (this|that) (preference|fact)|recall|what do you remember)\b/.test(text) ||
+    /\b(remember (?:that|this|the)|save (this|that) (preference|fact)|keep this .*in mind|recall|what do you remember)\b/.test(text) ||
     /\b(weather|rain|forecast|temperature)\b/.test(text) ||
     /\b(screenshot|screen shot|my screen|image|photo|picture)\b/.test(text) ||
     /\b(what os|operating system|os version|shell am i|free disk|disk space|memory)\b/.test(text) ||
@@ -147,7 +147,8 @@ export function expectedToolsForInput(text: string): string[] {
   if (/\b(today'?s date|day of the week|what time|current time|right now|days? until|new year'?s day)\b/.test(text)) add("current_time");
   if (/\b(calculate|calculator|compute|standard deviation|average|mean|percent|percentage|square root|fahrenheit|celsius|seconds?|minutes?|hours?)\b|\d+\s*[%*/+-]/.test(text)) add("calc");
   if (/\b(what os|operating system|os version|shell am i|free disk|disk space|memory)\b/.test(text)) add("system_info", "bash");
-  if (/\b(remember that|save (this|that) (preference|fact))\b/.test(text)) add("remember");
+  const memoryRequest = /\b(remember (?:that|this|the)|save (this|that) (preference|fact)|keep this .*in mind)\b/.test(text);
+  if (memoryRequest) add("remember");
   if (/\b(recall|what do you remember|stored memor(y|ies))\b/.test(text)) add("recall");
   if (/\b(ask me|ask the user|ask for|tell me first|before doing anything)\b/.test(text)) add("ask_user");
   if (/\b(take a screenshot|capture (my )?screen|my screen|screen shot)\b/.test(text)) add("capture_screen");
@@ -157,7 +158,15 @@ export function expectedToolsForInput(text: string): string[] {
   if (/\b(weather|rain|forecast|temperature)\b/.test(text)) add("weather");
   if (/\b(look up|definition of|current version|latest|research|source link)\b/.test(text)) add("web_search", "web_fetch");
   if (/\b(make a get request|http_request|httpbin|api request)\b/.test(text)) add("http_request");
-  if (/\b(notes?|make a note|create a note|append.*note)\b/.test(text)) add("apple");
+  if (!memoryRequest && /\b(notes?|make a note|create a note|append.*note)\b/.test(text)) add("apple");
+  if (/\b(?:create|write|make)\s+(?:a\s+)?file(?:\s+called|\s+named)?\b/.test(text)) add("write_file");
+  if (/\b(what|which|list|show)\b.*\b(scheduled|schedules|reminders?|cron)\b/.test(text)) add("schedule_list");
+  if (/\b(unread|inbox|email|e-mail|mailbox)\b/.test(text)) add("email");
+  if (/\b(recent messages?|imessages?|texts?)\b/.test(text)) add("apple");
+  if (/\b(calendar|schedule)\b/.test(text) && /\b(today|tomorrow|week|review|check|look)\b/.test(text)) add("calendar_list");
+  if (/\b(free|available|availability|conflict-free|fit)\b.*\b(slot|time|calendar|meeting|walkthrough|interview)?\b/.test(text)) add("calendar_find_free");
+  if (/\b(project)\b/.test(text) && /\b(stakeholder|client|milestone|track|create|add)\b/.test(text)) add("people", "projects");
+  if (/\b(?:create|add|track)\b.*\b(?:high-priority |priority )?task\b/.test(text)) add("manage_tasks");
   return tools;
 }
 

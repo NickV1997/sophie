@@ -106,6 +106,9 @@ export const TOOL_GROUPS: ToolGroup[] = [
       "people",
       "projects",
       "delegate",
+      "privacy",
+      "daemon_work",
+      "activity",
       "stop_webapp",
     ],
   },
@@ -257,11 +260,12 @@ export const loadTools: Tool = {
   summarize: (a) => `${a.group}`,
   risk: () => "safe",
   async execute(args) {
-    const name = String(args.group ?? "").trim();
+    const requested = String(args.group ?? "").trim();
+    const name = ({ email: "assistant", messaging: "assistant", messages: "assistant", calendar: "assistant", scheduling: "assistant", tasks: "assistant" } as Record<string, string>)[requested] ?? requested;
     const group = groupByName.get(name);
     if (!group) {
       const available = TOOL_GROUPS.map((g) => g.name).join(", ");
-      return { content: `No tool group named "${name}". Available groups: ${available}.`, isError: true };
+      return { content: `No tool group named "${requested}". Available groups: ${available}.`, isError: true };
     }
     activateToolGroups([name]);
     // Late import to avoid a module cycle (registry imports this file's tool).

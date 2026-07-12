@@ -18,6 +18,22 @@ export interface ToolResult {
   /** End the turn after this tool and wait for the user (e.g. ask_user). The
    *  content is surfaced to the user as the message to answer. */
   endTurn?: boolean;
+  /** Runtime-enforced origin/trust metadata. Tools may provide a more precise
+   * value; the agent supplies a conservative default for every result. */
+  provenance?: ResultProvenance;
+}
+
+export type TrustLevel = "system" | "local" | "external";
+export type Sensitivity = "public" | "personal" | "secret";
+
+export interface ResultProvenance {
+  evidenceId?: string;
+  contentHash?: string;
+  source: string;
+  trust: TrustLevel;
+  sensitivity: Sensitivity;
+  /** Human-readable locator such as a URL, mailbox, path, or MCP server. */
+  locator?: string;
 }
 
 export interface ToolContext {

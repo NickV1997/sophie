@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   addJournalEntry,
   beginObjective,
@@ -12,6 +12,7 @@ import {
   tasksForPrompt,
 } from "../src/agent/tasks.ts";
 
+beforeEach(() => clearTasks());
 afterEach(() => clearTasks());
 
 describe("task jobs", () => {
@@ -25,7 +26,7 @@ describe("task jobs", () => {
     expect(job?.phase).toBe("gather");
     expect(getObjective()?.jobId).toBe(job?.id);
     expect(getTasks()[0]?.jobId).toBe(job?.id);
-    expect(getJournal()[0]?.jobId).toBe(job?.id);
+    expect(getJournal().at(-1)?.jobId).toBe(job?.id);
     expect(tasksForPrompt()).toContain(job!.id);
   });
 

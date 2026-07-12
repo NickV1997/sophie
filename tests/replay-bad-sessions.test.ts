@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { classifyTurnIntent } from "../src/agent/intent.ts";
 import type { Objective, Task } from "../src/agent/tasks.ts";
+import replays from "./fixtures/runtime-failure-replays.json";
+import { deterministicToolCallForInput } from "../src/agent/deterministic_tools.ts";
 
 const chatAppObjective: Objective = {
   content: "Create Desktop/test folder, scaffold a Next.js project with latest shadcn/ui, install AI chat components, and replace page.tsx with a ChatGPT-like chatbot UI.",
@@ -23,5 +25,12 @@ describe("bad session replay router checks", () => {
     expect(intent.kind).not.toBe("continue_job");
     expect(intent.shouldTrackTasks).toBe(false);
     expect(intent.resetReason).toBeTruthy();
+  });
+
+  test.each(replays)("replays recorded runtime failure $id from $source", (replay) => {
+    const intent = classifyTurnIntent(replay.prompt, { objective: null, tasks: [] });
+    const deterministic = deterministicToolCallForInput(replay.prompt, intent);
+    expect([...(intent.expectedTools ?? []), deterministic?.name]).toContain(replay.expectedTool);
+    if (replay.bannedTool) expect(intent.expectedTools ?? []).not.toContain(replay.bannedTool);
   });
 });
