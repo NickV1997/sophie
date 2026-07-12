@@ -21,6 +21,7 @@ mock.module("../src/llm/client.ts", () => ({
   ping: async () => ({ ok: true, detail: "mock" }),
   detectContextWindow: async () => ({ nCtx: null, detail: "mock" }),
   detectLoadedModel: async () => ({ id: "mock", source: "mock" }),
+  getActiveModel: () => "mock",
 }));
 
 const { Agent } = await import("../src/agent/agent.ts");

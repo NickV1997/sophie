@@ -9,6 +9,8 @@ import {
 import { lookupPeople, renderPerson } from "../people/store.ts";
 import { addCron } from "../agent/scheduler.ts";
 import type { Tool } from "./types.ts";
+import { createHash } from "node:crypto";
+import { recordActivity } from "../system/activity.ts";
 
 export const delegateTool: Tool = {
   name: "delegate",
@@ -19,8 +21,8 @@ export const delegateTool: Tool = {
     properties: {
       action: {
         type: "string",
-        enum: ["add", "list", "fire", "cancel"],
-        description: "add: create delegation; list: show active; fire: draft+send update now; cancel: disable",
+        enum: ["add", "list", "fire", "mark_sent", "cancel"],
+        description: "add: create delegation; list: show active; fire: prepare an update; mark_sent: record a confirmed successful delivery; cancel: disable",
       },
       id: { type: "string", description: "Delegation id (for fire/cancel)" },
       title: { type: "string", description: "Short label, e.g. 'Paul / Stivy updates'" },
@@ -30,6 +32,7 @@ export const delegateTool: Tool = {
       channel: { type: "string", enum: ["imessage", "notify"], description: "How to send (default: imessage)" },
       cron: { type: "string", description: "5-field cron for recurring check-ins (e.g. '0 9 * * 5' for Fri 9am). Optional." },
       auto_send: { type: "boolean", description: "Auto-send without asking (default false = draft+ask)" },
+      delivered_content: { type: "string", description: "mark_sent: exact successfully delivered content; stored only as a SHA-256 hash." },
     },
     required: ["action"],
   },
@@ -74,11 +77,15 @@ export const delegateTool: Tool = {
       let schedMsg = "";
       if (cronExpr) {
         try {
+          const sendInstruction = autoSend
+            ? `The user explicitly authorized automatic sending when this delegation was created. Draft an update and send it via ${channel === "imessage" ? "iMessage (apple tool, messages_send)" : "notification (notify tool)"}. Only after that send succeeds, call delegate(action:"mark_sent", id:"${rec.id}").`
+            : "Draft the update, show it to the user, and ask for approval. Do not send it until the user approves the exact draft.";
           const schedItem = addCron({
             title: `Delegate: ${title}`,
             cron: cronExpr,
             action: "run",
-            prompt: `You have a standing delegation: keep ${person} informed about ${topic}. ${instruction}. Draft an update based on the current state of things and send it via ${channel === "imessage" ? "iMessage (apple tool, messages_send)" : "notification (notify tool)"}.`,
+            prompt: `You have a standing delegation: keep ${person} informed about ${topic}. ${instruction}. ${sendInstruction}`,
+            authorization: { createdBy: "user", instruction, allowedCapabilities: ["read_public", "read_private", ...(autoSend ? ["communicate_external"] : [])], outwardAllowed: autoSend, approvedAt: Date.now() },
           });
           setDelegateScheduleId(rec.id, schedItem.id);
           schedMsg = ` Recurring schedule set (${cronExpr}, schedule id: ${schedItem.id}).`;
@@ -104,9 +111,6 @@ export const delegateTool: Tool = {
       const people = lookupPeople(del.person);
       const personContext = people.length ? renderPerson(people[0]!) : `No person record found for "${del.person}".`;
 
-      // Update lastSent
-      updateDelegateSent(id);
-
       const draftGuidance = [
         `Draft an update for ${del.person} about: ${del.topic}.`,
         `Instruction: ${del.instruction}`,
@@ -115,13 +119,27 @@ export const delegateTool: Tool = {
         "Person context:",
         personContext,
         "",
-        `After drafting, send via: ${del.channel === "imessage" ? `apple(action:"messages_send", to:"${del.person}", text:<draft>)` : `notify(message:<draft>)`}`,
+        del.autoSend
+          ? `Automatic sending was explicitly authorized. After drafting, send via: ${del.channel === "imessage" ? `apple(action:"messages_send", to:"${del.person}", text:<draft>)` : `notify(message:<draft>)`}. Only after delivery succeeds, call delegate(action:"mark_sent", id:"${del.id}").`
+          : "Automatic sending is NOT authorized. Return the draft and ask the user to approve it; do not send yet.",
       ].join("\n");
 
       return {
         content: draftGuidance,
         display: `${del.person} / ${del.topic}`,
       };
+    }
+
+    if (action === "mark_sent") {
+      const id = String(args.id ?? "").trim();
+      if (!id) return { content: "id is required for mark_sent.", isError: true };
+      const del = getDelegate(id);
+      if (!del) return { content: `No delegation found with id "${id}".`, isError: true };
+      const delivered = String(args.delivered_content ?? "");
+      const delivery = { at: Date.now(), channel: del.channel, recipient: del.person, contentHash: createHash("sha256").update(delivered).digest("hex"), approvalSource: del.autoSend ? "standing-auto-send" : "interactive", result: "succeeded" };
+      updateDelegateSent(id, delivery);
+      recordActivity({ kind: "delivery", entityType: "delegation", entityId: id, action: del.channel, status: "succeeded", summary: `Delivered to ${del.person}`, metadata: delivery });
+      return { content: `Recorded successful delivery for delegation "${id}".`, display: `delivered ${id}` };
     }
 
     if (action === "cancel") {
@@ -132,6 +150,6 @@ export const delegateTool: Tool = {
       return { content: `Delegation "${id}" cancelled.` };
     }
 
-    return { content: `Unknown action "${action}". Valid: add, list, fire, cancel.`, isError: true };
+    return { content: `Unknown action "${action}". Valid: add, list, fire, mark_sent, cancel.`, isError: true };
   },
 };

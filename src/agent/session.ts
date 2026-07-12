@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Mode } from "../config.ts";
 import type { ChatMessage } from "../llm/client.ts";
 import { saveEpisodeSnapshot } from "./episodes.ts";
 import type { AgentJob, JournalEntry, Objective, Task } from "./tasks.ts";
+import { writePrivateFileAtomic } from "../system/atomic-file.ts";
 
 /**
  * Session persistence — save the whole conversation (model history, task list,
@@ -58,7 +59,7 @@ export function newSessionId(): string {
 export function saveSession(state: SessionState): void {
   if (!state.history.length && !state.blocks.length) return; // nothing to save
   ensureDir();
-  writeFileSync(join(DIR, `${state.id}.json`), JSON.stringify(state));
+  writePrivateFileAtomic(join(DIR, `${state.id}.json`), JSON.stringify(state));
   if (state.job) {
     saveEpisodeSnapshot({
       job: state.job,

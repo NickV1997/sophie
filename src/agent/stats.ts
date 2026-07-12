@@ -15,6 +15,10 @@ export interface TurnStats {
   genChars: number;
   /** Milliseconds spent streaming this turn (generation only, not tools). */
   genMs: number;
+  /** Model requests made this turn, including tool-followup rounds. */
+  modelRequests?: number;
+  /** Time to first streamed token for the latest successful request. */
+  firstTokenMs?: number;
   /** True while a turn is running. */
   busy: boolean;
 }
@@ -41,7 +45,12 @@ export function subscribeTurnStats(fn: (s: TurnStats) => void): () => void {
 }
 
 export function beginTurnStats(): void {
-  stats = { ...stats, genChars: 0, genMs: 0, busy: true };
+  stats = { ...stats, genChars: 0, genMs: 0, modelRequests: 0, firstTokenMs: undefined, busy: true };
+  publish();
+}
+
+export function recordModelRequest(firstTokenMs?: number): void {
+  stats = { ...stats, modelRequests: (stats.modelRequests ?? 0) + 1, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}) };
   publish();
 }
 

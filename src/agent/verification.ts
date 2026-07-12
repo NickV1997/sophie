@@ -5,7 +5,7 @@ import type { AgentJob, JournalEntry, Objective, Task } from "./tasks.ts";
 export function needsVerifierEvidence(objective: Objective | null, tasks: Task[]): boolean {
   const text = [objective?.content ?? "", ...tasks.map((t) => t.content)].join(" ").toLowerCase();
   return (
-    /\b(code|codebase|app|application|project|repo|frontend|backend|ui|website|site|page|component|api|server|python|next\.?js|react|typescript|javascript|build|test|typecheck|lint|browser)\b/.test(text) &&
+    /\b(code|codebase|app|application|repo|frontend|backend|ui|website|site|page|component|api|server|python|next\.?js|react|typescript|javascript|typecheck|lint)\b/.test(text) &&
     /\b(build|fix|create|scaffold|implement|write|edit|update|verify|test|make|debug|repair|change)\b/.test(text)
   );
 }

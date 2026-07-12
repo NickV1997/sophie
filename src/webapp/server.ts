@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, networkInterfaces } from "node:os";
 import { basename, extname, join } from "node:path";
@@ -30,7 +30,6 @@ import {
 import { calendarSyncStatus, syncCalendarEvent } from "../calendar/sync.ts";
 import { synthesizeToWav } from "../channels/notify.ts";
 import { ttsStatus } from "../tts/service.ts";
-import { cleanForSpeech, splitReadyChunk } from "../channels/streaming_speech.ts";
 import { IMAGE_EXTENSIONS, MAX_IMAGE_BYTES } from "../llm/image-files.ts";
 import { detectLoadedModel, ping } from "../llm/client.ts";
 import { ENV_KEYS, readEnvFile, writeEnv } from "../system/env.ts";
@@ -47,6 +46,9 @@ import {
   type SessionState,
 } from "../agent/session.ts";
 import type { ToolResult } from "../tools/types.ts";
+import { authorized } from "./auth.ts";
+import { WebAudioStream } from "./audio.ts";
+export { authorized } from "./auth.ts";
 
 type BunServer = ReturnType<typeof Bun.serve>;
 
@@ -215,17 +217,6 @@ export function resolveBindHosts(override?: string): { hosts: string[]; note: st
 /** Constant-time check of the per-launch API token, accepted as a Bearer
  *  header, an X-Sophie-Token header, or a ?token= query parameter.
  *  (Exported for tests.) */
-export function authorized(req: Request, url: URL, token: string): boolean {
-  const presented =
-    req.headers.get("x-sophie-token") ??
-    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-    url.searchParams.get("token") ??
-    "";
-  const a = Buffer.from(presented);
-  const b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 /** The token rides in the URL fragment: never sent over the wire on page
  *  load; the app shell reads it into localStorage and strips it. */
 function tokenizedUrl(base: string, token: string): string {
@@ -366,6 +357,9 @@ class WebRuntime {
           return json({ error: "Start and end times are required." }, 400);
         }
         if (parsed.value.end <= parsed.value.start) return json({ error: "End must be after start." }, 400);
+        if (startOfDayMs(parsed.value.start) < startOfDayMs()) {
+          return json({ error: "Events can't be added to days that have already passed." }, 400);
+        }
         const ev = addEvent({
           title: parsed.value.title,
           start: parsed.value.start,
@@ -394,6 +388,11 @@ class WebRuntime {
         const start = parsed.value.start ?? existing.start;
         const end = parsed.value.end ?? existing.end;
         if (end <= start) return json({ error: "End must be after start." }, 400);
+        // An event already on a past day may be edited in place, but nothing
+        // can be moved onto a day that has already passed.
+        if (startOfDayMs(start) < startOfDayMs() && startOfDayMs(start) !== startOfDayMs(existing.start)) {
+          return json({ error: "Events can't be moved to a day that has already passed." }, 400);
+        }
         const ev = updateEvent(id, parsed.value)!;
         const sync = await syncCalendarEvent(ev);
         return json({ event: getEvent(id) ?? ev, sync });
@@ -673,6 +672,7 @@ class WebRuntime {
           onError: (message) => this.addBlock({ id: nid(), kind: "error", text: message }, send),
         },
         signal,
+        { source: "webapp" },
       );
       await webAudio.finish();
     } finally {
@@ -798,6 +798,13 @@ class WebRuntime {
     if (!force && now - this.lastProgressSaveAt < 1000) return;
     this.save();
   }
+}
+
+/** Local-time midnight for the given (or current) timestamp, in epoch ms. */
+function startOfDayMs(ms = Date.now()): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
 function numberParam(url: URL, name: string): number | undefined {
@@ -1051,6 +1058,8 @@ async function listTtsVoices(): Promise<TtsVoice[]> {
   }
 }
 
+/* WebAudioStream lives in ./audio.ts so transport/session routing stays separate from synthesis. */
+/*
 class WebAudioStream {
   private buffer = "";
   private queue: Promise<void> = Promise.resolve();
@@ -1141,6 +1150,10 @@ function stripEmoji(text: string): string {
     .replace(/[\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu, "");
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+}
+*/
 function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
 }

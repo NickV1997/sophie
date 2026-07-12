@@ -9,10 +9,12 @@
  * (for a reschedule) recreated, so the calendar stays the single source of
  * truth and reminders can never fire for a moved or dead event.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { addOnce, cancelSchedule } from "../agent/scheduler.ts";
-import { MEMORY_DIR } from "../memory/store.ts";
+import { addOnce, cancelSchedule, hasActiveSchedule } from "../agent/scheduler.ts";
+import { memoryHomeDir } from "../memory/facts.ts";
+import { readJsonWithRecovery, writePrivateFileAtomic } from "../system/atomic-file.ts";
+import { upsertEntity } from "../system/entities.ts";
 
 export type EventStatus = "confirmed" | "cancelled";
 
@@ -40,23 +42,32 @@ export interface CalendarEvent {
   updatedAt: number;
 }
 
-export const CALENDAR_PATH = join(MEMORY_DIR, "calendar.json");
+function calendarPath(): string {
+  return join(memoryHomeDir(), "calendar.json");
+}
 
 /** Default reminder leads for new events: a 30-minute heads-up plus a 5-minute
  *  "it's about to start" ping. Both go to desktop + Telegram via notifyUser. */
 export const DEFAULT_REMINDER_LEADS = [30, 5];
 
 let events: CalendarEvent[] | null = null;
+let activePath: string | null = null;
 
 function ensureDir(): void {
-  if (!existsSync(MEMORY_DIR)) mkdirSync(MEMORY_DIR, { recursive: true });
+  const dir = memoryHomeDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 function load(): CalendarEvent[] {
+  const path = calendarPath();
+  if (activePath !== path) {
+    events = null;
+    activePath = path;
+  }
   if (events) return events;
-  if (!existsSync(CALENDAR_PATH)) return (events = []);
+  if (!existsSync(path)) return (events = []);
   try {
-    const parsed = JSON.parse(readFileSync(CALENDAR_PATH, "utf8"));
+    const parsed: any = readJsonWithRecovery(path);
     const list: unknown[] = Array.isArray(parsed?.events) ? parsed.events : [];
     events = list.filter(
       (x): x is CalendarEvent =>
@@ -71,7 +82,7 @@ function load(): CalendarEvent[] {
 function persist(): void {
   ensureDir();
   const sorted = [...(events ?? [])].sort((a, b) => a.start - b.start);
-  writeFileSync(CALENDAR_PATH, `${JSON.stringify({ events: sorted }, null, 2)}\n`);
+  writePrivateFileAtomic(calendarPath(), `${JSON.stringify({ schemaVersion: 1, events: sorted }, null, 2)}\n`);
 }
 
 function newId(): string {
@@ -129,6 +140,27 @@ function syncReminders(ev: CalendarEvent): void {
   }
 }
 
+/**
+ * Repair reminder links after startup. Nothing fires while Sophie is closed;
+ * overdue persisted reminders are left for startScheduler's immediate tick,
+ * while missing future reminders are recreated from their calendar event.
+ */
+export function reconcileCalendarReminders(now = Date.now()): { repairedEvents: number; createdReminders: number } {
+  let repairedEvents = 0;
+  let createdReminders = 0;
+  for (const ev of load()) {
+    if (ev.status !== "confirmed" || ev.start <= now) continue;
+    const expectedFuture = ev.reminderLeads.filter((lead) => ev.start - lead * 60_000 > now).length;
+    const active = ev.reminderIds.filter(hasActiveSchedule).length;
+    if (active === expectedFuture && ev.reminderIds.length === expectedFuture) continue;
+    syncReminders(ev);
+    repairedEvents++;
+    createdReminders += ev.reminderIds.length;
+  }
+  if (repairedEvents) persist();
+  return { repairedEvents, createdReminders };
+}
+
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 export function addEvent(input: {
@@ -158,11 +190,26 @@ export function addEvent(input: {
   syncReminders(ev);
   list.push(ev);
   persist();
+  syncCalendarEntity(ev);
   return ev;
 }
 
 export function getEvent(id: string): CalendarEvent | undefined {
   return load().find((e) => e.id === id);
+}
+
+/** Import/update an event whose authoritative identity comes from Apple. */
+export function upsertExternalEvent(input: { appleId: string; title: string; start: number; end: number; location?: string; notes?: string; attendees?: string[]; cancelled?: boolean }): CalendarEvent {
+  let ev = load().find((item) => item.external?.appleId === input.appleId);
+  const now = Date.now();
+  if (!ev) {
+    ev = { id: newId(), title: input.title.trim() || "Untitled event", start: input.start, end: input.end, status: input.cancelled ? "cancelled" : "confirmed", reminderLeads: [], reminderIds: [], createdAt: now, updatedAt: now, external: { appleId: input.appleId, lastSyncedAt: now } };
+    load().push(ev);
+  } else {
+    ev.title = input.title.trim() || ev.title; ev.start = input.start; ev.end = input.end; ev.status = input.cancelled ? "cancelled" : "confirmed"; ev.updatedAt = now; ev.external = { ...ev.external, appleId: input.appleId, lastSyncedAt: now, lastSyncError: undefined };
+  }
+  ev.location = input.location?.trim() || undefined; ev.notes = input.notes?.trim() || undefined; ev.attendees = input.attendees?.filter(Boolean);
+  syncReminders(ev); persist(); syncCalendarEntity(ev); return ev;
 }
 
 export function updateEvent(
@@ -186,7 +233,12 @@ export function updateEvent(
   ev.updatedAt = Date.now();
   syncReminders(ev); // times/text may have changed — reminders must match
   persist();
+  syncCalendarEntity(ev);
   return ev;
+}
+
+function syncCalendarEntity(event: CalendarEvent): void {
+  upsertEntity("calendar_event", event.id, event.title, [event.external?.appleId ?? "", ...(event.attendees ?? [])]);
 }
 
 /** Persist external calendar mirror ids/status without changing event content. */

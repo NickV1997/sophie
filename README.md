@@ -10,7 +10,8 @@ she reads and writes files, runs commands, searches, plans, and gets things done
 in the terminal.
 
 Built with [OpenTUI](https://github.com/sst/opentui) for a clean,
-Claude-Code-inspired interface, and tuned for **Qwen3** models.
+Claude-Code-inspired interface, with protocol adapters for tool-capable local
+models including **Qwen, GLM, Gemma, and GPT-OSS**.
 
 ---
 
@@ -109,6 +110,11 @@ cd sophie
 4. creates your `.env` from `.env.example` (leaves an existing `.env` untouched),
 5. registers a global `sophie` command via `bun link`.
 
+To skip the optional Python TTS environment, use
+`SOPHIE_INSTALL_TTS=0 ./install.sh`. Sophie itself and macOS speech continue to
+work without it. Kokoro autostart is off in a fresh configuration; enable it in
+`/setup` after installing its model files.
+
 If Bun's global bin dir isn't on your `PATH` yet, the installer prints the exact
 `export PATH=...` line to add to your shell profile (`~/.zshrc` / `~/.bashrc`).
 
@@ -116,8 +122,10 @@ If Bun's global bin dir isn't on your `PATH` yet, the installer prints the exact
 
 ## 2. Set up a model server
 
-Sophie needs an **OpenAI-compatible** endpoint with a **Qwen3** model loaded. Pick
-one of these.
+Sophie needs an **OpenAI-compatible** endpoint with a tool-capable instruction
+model loaded. Qwen remains a strong default; GLM, Gemma, and GPT-OSS are also
+supported. Base models or chat models without tool training can still chat but
+cannot be expected to operate the agent reliably.
 
 ### Fastest: Ollama
 
@@ -206,7 +214,7 @@ sophie doctor     # verifies install, .env, and that the model server is reachab
 
 ```text
 what is in @~/Desktop/screenshot.png?
-compare "@/Users/me/Desktop/photo with spaces.jpg" to this design
+compare "@/path/to/photo with spaces.jpg" to this design
 ```
 
 Sophie can also find and inspect images herself (`find_images` + `describe_images`)
@@ -223,6 +231,41 @@ using your local vision-capable model.
 
 Slash commands: `/plan` · `/normal` · `/setup` · `/continue` · `/new` · `/clear` ·
 `/resume` · `/sessions` · `/webapp` · `/memory` · `/commands` · `/help` · `/exit`.
+
+### Optional background Sophie (macOS)
+
+Sophie can run continuously under `launchd` for reminders, watchers, Telegram,
+calendar reconciliation, and approved background work:
+
+```bash
+sophie daemon install
+sophie daemon start
+sophie daemon status
+# later: sophie daemon stop
+```
+
+Background work uses the same provenance, capability, and approval guardrails as
+the TUI. A task pauses when it needs approval; open Sophie and ask to list
+background work, then approve the exact pending call. Approvals are one-use and
+argument-bound. The daemon keeps a durable crash-recoverable queue.
+
+### Platform capabilities
+
+Sophie is macOS-first. On macOS she exposes Apple Calendar, Messages, Notes,
+Reminders, Contacts, screen capture, and notifications. On Linux or Windows,
+Apple-only tools are hidden and the built-in calendar, tasks, memory, filesystem,
+web, and general agent tools remain available.
+
+### Secrets and privacy
+
+Run `sophie secrets migrate` on macOS to copy configured API tokens and the Gmail
+app password into Keychain. Environment variables remain an explicit override.
+The `privacy` tool can inventory, export, retain, or delete scoped local data;
+exports deliberately exclude `.env`, credentials, and tokens.
+
+Approximate location lookup is disabled by default. Set
+`SOPHIE_LOCATION_LOOKUP=true` only if you want Sophie to make a one-time request
+to `ip-api.com` and remember the returned city-level location locally.
 
 ### Phone / web app
 
@@ -395,15 +438,19 @@ bin/sophie.ts ─► src/index.tsx ─► OpenTUI React app (src/tui)
                                          │
                                          ▼
                                   src/agent/agent.ts   ← think→act→observe loop
-                                  ├─ src/llm           ← streaming + Qwen parsing
+                                  ├─ src/llm           ← streaming + model protocol adapters
                                   ├─ src/tools         ← fs + bash + scaffold tools
                                   └─ src/agent/safety  ← approval gate
 ```
 
-**Tool calling.** Tools are injected into the system prompt in Qwen's `<tools>`
-format. Sophie parses `<tool_call>` blocks from the streamed response, runs the tool,
-and feeds the result back as a `<tool_response>` — repeating until the turn is done.
-This is handled entirely client-side, so it's robust across different servers.
+**Tool calling.** `src/llm/tool-protocol.ts` selects a model-family adapter after
+startup model discovery. Adapters own tool prompting, parsing, grammar, repair,
+and retry syntax. The streaming client also normalizes OpenAI-compatible
+`delta.tool_calls` emitted by llama.cpp's native model parsers into Sophie's
+canonical internal call shape. Qwen/Hermes JSON and GLM's native arg tags are
+supported today; unknown models use the established Qwen/Hermes fallback. Tools
+are schema-validated and safety-gated after normalization, so model-specific
+syntax never leaks into the execution engine.
 
 **Thinking.** Normal mode runs with reasoning off (fast). Plan mode reasons at medium
 effort (read-only); build mode reasons briefly, then implements.
@@ -422,6 +469,17 @@ rules, just-in-time context. The facts-only mandate and work loop live in
 Read-only calls run instantly; mutating/destructive calls require your `y/n`
 approval. Plan mode is locked to read-only tools.
 
+## Real-world benchmark
+
+`bun run bench:real-world` runs 28 stateful interactions across simulated
+founder, business-owner, COO, and technical-founder workweeks through the real
+Sophie runtime and configured local model. Personal services are deterministic
+fakes, each persona receives an isolated Sophie home, and coding tasks execute
+only in generated benchmark workspaces. The release gate requires at least 95%
+weighted success and zero false actions. See
+[the benchmark guide](src/bench/REAL_WORLD.md) for scenarios, scoring, and smoke
+commands.
+
 ---
 
 ## Security & privacy
@@ -429,6 +487,11 @@ approval. Plan mode is locked to read-only tools.
 Sophie runs shell commands and edits files on your machine, and is local-first by
 design. See [SECURITY.md](SECURITY.md) for the trust model, exactly what does and
 doesn't leave your machine, and how to report a vulnerability.
+
+Before publishing a branch, run `bun run audit:public`. It scans the exact tracked
+and unignored file set for local state, private keys, common credential formats,
+machine-specific home paths, and unsafe commit metadata. The same check runs in
+CI.
 
 ## License
 

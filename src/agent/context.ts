@@ -71,13 +71,13 @@ export function replyReserve(): number {
 }
 
 /** Tokens of history we can afford, given the fixed system-prompt cost. */
-export function historyBudget(systemTokens: number): number {
+export function historyBudget(systemTokens: number, modelHistoryCap = config.maxHistoryTokens): number {
   const windowBudget = Math.max(2000, usableContextWindow() - systemTokens - replyReserve());
   // A large context window (e.g. 200k) does NOT mean a small model stays
   // coherent using all of it — long uncompacted history makes it slower and
   // dumber. Cap the working history to a size it reasons well over, so
   // compaction always fires on long chats no matter how big the raw window is.
-  return Math.min(windowBudget, Math.max(4000, config.maxHistoryTokens));
+  return Math.min(windowBudget, Math.max(4000, Math.min(config.maxHistoryTokens, modelHistoryCap)));
 }
 
 /**

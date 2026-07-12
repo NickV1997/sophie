@@ -9,6 +9,7 @@ let scriptIndex = 0;
 let prompts: ChatMessage[][] = [];
 
 mock.module("../src/llm/client.ts", () => ({
+  getActiveModel: () => "mock",
   streamChat: async function* (messages: ChatMessage[]) {
     prompts.push(messages);
     yield script[scriptIndex] ?? "Done.";
@@ -92,5 +93,14 @@ describe("Sophie runtime memory", () => {
     const block = memoryForPrompt("operational note exact evidence stale facts", process.cwd(), { maxTokens: 160 });
     expect(block).toContain("Operational note");
     expect(block.length).toBeLessThan(700);
+  });
+
+  test("compound memory requests continue through the model after saving", async () => {
+    const agent = new Agent(); const tools: string[] = []; script = ["I will review the inbox next."];
+    await agent.run("Remember that focus blocks are protected, then explain the preference back to me.", {
+      onToolCall: (call) => tools.push(call.name), requestApproval: async () => "approve",
+    });
+    expect(tools).toContain("remember");
+    expect(prompts.length).toBeGreaterThan(0);
   });
 });

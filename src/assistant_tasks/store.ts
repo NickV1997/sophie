@@ -1,7 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { MEMORY_DIR } from "../memory/store.ts";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { memoryHomeDir } from "../memory/facts.ts";
 import { displayPath } from "../system/paths.ts";
+import { writePrivateFileAtomic } from "../system/atomic-file.ts";
+import { findEntities, linkEntities, upsertEntity } from "../system/entities.ts";
 
 export type AssistantTaskStatus = "open" | "in_progress" | "done" | "cancelled";
 export type AssistantTaskPriority = "low" | "normal" | "high";
@@ -20,7 +22,9 @@ export interface AssistantTask {
   completedAt?: string;
 }
 
-export const ASSISTANT_TASKS_PATH = join(MEMORY_DIR, "tasks.json");
+export function assistantTasksPath(): string {
+  return join(memoryHomeDir(), "tasks.json");
+}
 
 const STATUSES: AssistantTaskStatus[] = ["open", "in_progress", "done", "cancelled"];
 const PRIORITIES: AssistantTaskPriority[] = ["low", "normal", "high"];
@@ -30,7 +34,8 @@ function nowIso(): string {
 }
 
 function ensureDir(): void {
-  if (!existsSync(MEMORY_DIR)) mkdirSync(MEMORY_DIR, { recursive: true });
+  const dir = dirname(assistantTasksPath());
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 function normalizeString(value: unknown): string | undefined {
@@ -67,9 +72,10 @@ function normalizeTask(raw: any): AssistantTask | null {
 }
 
 export function readAssistantTasks(): AssistantTask[] {
-  if (!existsSync(ASSISTANT_TASKS_PATH)) return [];
+  const path = assistantTasksPath();
+  if (!existsSync(path)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(ASSISTANT_TASKS_PATH, "utf8"));
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
     const list: unknown[] = Array.isArray(parsed?.tasks) ? parsed.tasks : Array.isArray(parsed) ? parsed : [];
     return list.map(normalizeTask).filter((task): task is AssistantTask => task !== null);
   } catch {
@@ -88,7 +94,7 @@ export function writeAssistantTasks(tasks: AssistantTask[]): void {
       a.updatedAt.localeCompare(b.updatedAt)
     );
   });
-  writeFileSync(ASSISTANT_TASKS_PATH, `${JSON.stringify({ tasks: sorted }, null, 2)}\n`);
+  writePrivateFileAtomic(assistantTasksPath(), `${JSON.stringify({ tasks: sorted }, null, 2)}\n`);
 }
 
 export function addAssistantTask(input: {
@@ -113,6 +119,7 @@ export function addAssistantTask(input: {
     ...(input.project ? { project: input.project.trim() } : {}),
   };
   writeAssistantTasks([...readAssistantTasks(), task]);
+  syncTaskEntity(task);
   return task;
 }
 
@@ -141,7 +148,15 @@ export function updateAssistantTask(id: string, patch: Partial<Omit<AssistantTas
   if (status !== "done") delete next.completedAt;
   tasks[idx] = next;
   writeAssistantTasks(tasks);
+  syncTaskEntity(next);
   return next;
+}
+
+function syncTaskEntity(task: AssistantTask): void {
+  const entity = upsertEntity("task", task.id, task.title, task.tags ?? []);
+  if (!task.project) return;
+  const project = findEntities(task.project, "project").find((item) => item.name.toLowerCase() === task.project!.toLowerCase());
+  if (project) linkEntities(entity.id, project.id, "belongs_to_project");
 }
 
 export function deleteAssistantTask(id: string): boolean {
@@ -195,7 +210,7 @@ export function assistantTasksForPrompt(cwd: string): string {
   });
   return [
     "# Long-term assistant tasks",
-    `Persistent tasks from ${displayPath(ASSISTANT_TASKS_PATH)}. These are not the live execution checklist; use manage_tasks to add, update, finish, cancel, or search them. Current project: ${currentProject}.`,
+    `Persistent tasks from ${displayPath(assistantTasksPath())}. These are not the live execution checklist; use manage_tasks to add, update, finish, cancel, or search them. Current project: ${currentProject}.`,
     ...lines,
   ].join("\n");
 }

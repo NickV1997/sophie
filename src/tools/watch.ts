@@ -55,7 +55,11 @@ export const watchPath: Tool = {
     if (action === "add") return `watch ${a.path}${a.glob ? ` (${a.glob})` : ""}`;
     return a.id ? `${action} ${a.id}` : action;
   },
-  risk: () => "safe",
+  risk: (a) => {
+    const action = String(a.action ?? "list");
+    if (["cancel", "enable", "disable"].includes(action)) return "caution";
+    return action === "add" && a.do === "run" ? "caution" : "safe";
+  },
   async execute(args) {
     const action = String(args.action ?? "list");
 
@@ -105,6 +109,7 @@ export const watchPath: Tool = {
       prompt,
       glob: typeof args.glob === "string" ? args.glob : undefined,
       debounceMs: Number.isFinite(debounceSec) && debounceSec > 0 ? debounceSec * 1000 : undefined,
+      authorization: doAction === "run" ? { createdBy: "user", instruction: prompt, allowedCapabilities: ["read_public", "read_private"], outwardAllowed: false, approvedAt: Date.now() } : undefined,
     });
     return {
       content: `Watcher set (live while Sophie is running):\n${renderItem(item)}`,

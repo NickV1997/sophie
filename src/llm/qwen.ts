@@ -85,7 +85,7 @@ export interface ParsedToolCall {
  * thinking. Tags may be split across chunks — we always re-derive from the full
  * accumulated buffer so split tags are handled correctly.
  */
-export class QwenStreamParser {
+export class ToolStreamParser {
   private raw = "";
   private emittedContent = 0;
   private emittedThinking = 0;
@@ -230,6 +230,8 @@ function trimPartialTag(tail: string): string {
 export function safeParseCall(
   body: string,
 ): { name: string; arguments: Record<string, unknown> } | null {
+  const glm = parseGlmCall(body);
+  if (glm) return glm;
   for (const candidate of repairCallBodies(body)) {
     try {
       const obj = JSON.parse(candidate);
@@ -249,6 +251,41 @@ export function safeParseCall(
     }
   }
   return null;
+}
+
+/** GLM-4.7 native tool syntax:
+ * <tool_call>read_file<arg_key>path</arg_key><arg_value>a.ts</arg_value></tool_call>
+ * Values are coerced conservatively; structured JSON remains structured while
+ * normal command/path strings stay strings. */
+function parseGlmCall(body: string): { name: string; arguments: Record<string, unknown> } | null {
+  const firstTag = body.search(/<arg_key>/i);
+  if (firstTag < 0) return null;
+  const name = body.slice(0, firstTag).trim();
+  if (!/^[A-Za-z0-9_.:-]+$/.test(name)) return null;
+
+  const args: Record<string, unknown> = {};
+  const re = /<arg_key>\s*([\s\S]*?)\s*<\/arg_key>\s*<arg_value>\s*([\s\S]*?)\s*<\/arg_value>/gi;
+  let match: RegExpExecArray | null;
+  let count = 0;
+  while ((match = re.exec(body)) !== null) {
+    const key = match[1].trim();
+    if (!key) continue;
+    args[key] = parseGlmValue(match[2].trim());
+    count++;
+  }
+  return count ? { name, arguments: args } : null;
+}
+
+function parseGlmValue(value: string): unknown {
+  if (!value) return "";
+  if (/^(?:true|false|null)$/i.test(value) || /^[\[{\"]/.test(value) || /^-?\d+(?:\.\d+)?$/.test(value)) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      /* preserve non-JSON text verbatim */
+    }
+  }
+  return value;
 }
 
 /**
@@ -300,6 +337,9 @@ export async function repairToolCallsViaModel(raw: string, signal?: AbortSignal)
   }
   return calls;
 }
+
+/** Backward-compatible name for extensions/tests importing the old class. */
+export { ToolStreamParser as QwenStreamParser };
 
 /** Strip trailing commas before a closing } or ] — a very common small-model
  *  JSON slip that JSON.parse rejects outright. */

@@ -28,6 +28,9 @@ export interface CaseRecord {
   checks: { name: string; pass: boolean; detail: string }[];
   answerChars: number;
   answerPreview: string;
+  falseAction?: boolean;
+  actionQuality?: { unauthorizedActions: number; duplicateActions: number; falseCompletions: number; failedActions: number };
+  runtime?: { promptTokens: number; modelRequests: number; firstTokenMs?: number };
 }
 
 export interface Summary extends BenchSummary {}

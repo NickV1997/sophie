@@ -18,11 +18,11 @@ describe("home-relative path expansion", () => {
 
   test("resolvePath: ~ no longer resolves to a literal ~ folder under cwd", () => {
     // This was the bug: resolve(cwd, '~/Desktop/test') => <cwd>/~/Desktop/test
-    expect(resolvePath("/Users/demo", "~/Desktop/test")).toBe(join(homedir(), "Desktop/test"));
+    expect(resolvePath("/tmp/demo", "~/Desktop/test")).toBe(join(homedir(), "Desktop/test"));
   });
 
   test("resolvePath: relative paths resolve against cwd, absolute pass through", () => {
-    expect(resolvePath("/Users/demo/Desktop/sophie", "src/index.tsx")).toBe("/Users/demo/Desktop/sophie/src/index.tsx");
+    expect(resolvePath("/tmp/demo/sophie", "src/index.tsx")).toBe("/tmp/demo/sophie/src/index.tsx");
     expect(resolvePath("/cwd", "/abs/elsewhere")).toBe("/abs/elsewhere");
   });
 });

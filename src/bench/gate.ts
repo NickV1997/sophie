@@ -9,6 +9,7 @@ interface GateArgs {
   scope: "full" | "quick" | "medium" | "long";
   maxDrop: number;
   recordHistory: boolean;
+  categoryGates: boolean;
 }
 
 function parseArgs(argv: string[]): GateArgs {
@@ -24,6 +25,7 @@ function parseArgs(argv: string[]): GateArgs {
     scope,
     maxDrop: Number(get("--max-drop") ?? "0.02"),
     recordHistory: argv.includes("--record-history"),
+    categoryGates: !argv.includes("--no-category-gates"),
   };
 }
 
@@ -87,7 +89,19 @@ function main(): void {
     console.error(`Benchmark regression: pass-rate dropped more than ${(args.maxDrop * 100).toFixed(1)} points.`);
     process.exitCode = 1;
   }
+  if (args.scope === "full" && args.categoryGates) {
+    const regressions: string[] = [];
+    for (const [category, base] of Object.entries(baseline.byCategory ?? {})) {
+      const now = current.byCategory?.[category];
+      if (!now) { regressions.push(`${category}: missing`); continue; }
+      const categoryFloor = Math.max(0, base.passRate - args.maxDrop);
+      if (now.passRate < categoryFloor) regressions.push(`${category}: ${(now.passRate * 100).toFixed(1)}% < ${(categoryFloor * 100).toFixed(1)}%`);
+    }
+    if (regressions.length) {
+      console.error(`Category regressions:\n- ${regressions.join("\n- ")}`);
+      process.exitCode = 1;
+    }
+  }
 }
 
 main();
-

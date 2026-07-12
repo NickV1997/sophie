@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getSecret } from "./system/secrets.ts";
 
 /** Absolute path to the Sophie repo root (this file lives in <root>/src). */
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -109,7 +110,7 @@ function computeConfig(): Config {
   return {
     baseUrl: str("SOPHIE_BASE_URL", "http://localhost:11434/v1").replace(/\/+$/, ""),
     model: str("SOPHIE_MODEL", "qwen3"),
-    apiKey: str("SOPHIE_API_KEY", "local"),
+    apiKey: getSecret("SOPHIE_API_KEY") || "local",
     temperature: num("SOPHIE_TEMPERATURE", 0.6),
     topP: num("SOPHIE_TOP_P", 0.95),
     // Qwen3 recommendation: top_k=20 tightens the nucleus; min_p=0 is their
@@ -136,12 +137,12 @@ function computeConfig(): Config {
     ttsBackend: ttsBackend(),
     ttsBaseUrl: str("SOPHIE_TTS_BASE_URL", "http://127.0.0.1:8090").replace(/\/+$/, ""),
     ttsStreamReplies: bool("SOPHIE_TTS_STREAM_REPLIES", false),
-    ttsAutostart: bool("SOPHIE_TTS_AUTOSTART", true),
+    ttsAutostart: bool("SOPHIE_TTS_AUTOSTART", false),
     embeddings: bool("SOPHIE_EMBEDDINGS", true),
     embeddingsUrl: str("SOPHIE_EMBEDDINGS_URL", str("SOPHIE_BASE_URL", "http://localhost:11434/v1")).replace(/\/+$/, ""),
     embeddingsModel: str("SOPHIE_EMBEDDINGS_MODEL", str("SOPHIE_MODEL", "qwen3")),
     emailAddress: str("SOPHIE_EMAIL_ADDRESS", ""),
-    emailAppPassword: str("SOPHIE_EMAIL_APP_PASSWORD", ""),
+    emailAppPassword: getSecret("SOPHIE_EMAIL_APP_PASSWORD"),
     emailImapHost: str("SOPHIE_EMAIL_IMAP_HOST", "imap.gmail.com"),
     emailImapPort: num("SOPHIE_EMAIL_IMAP_PORT", 993),
     emailSmtpHost: str("SOPHIE_EMAIL_SMTP_HOST", "smtp.gmail.com"),

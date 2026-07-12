@@ -1,0 +1,6 @@
+[
+  { "source": "bench-results/2026-07-11T01-08-11", "id": "fs-write-01", "prompt": "Create a file called hello.txt containing the text 'Hello Sophie'.", "expectedTool": "write_file" },
+  { "source": "bench-results/2026-07-11T01-08-11", "id": "sched-02", "prompt": "What scheduled jobs or reminders do I currently have?", "expectedTool": "schedule_list" },
+  { "source": "bench-results/2026-07-08T18-17-31-runtime-gauntlet", "id": "mem-01", "prompt": "Remember this project preference: I prefer built-in Sophie tools over adding MCP integrations. Also remember the runtime codename is cobalt orchid.", "expectedTool": "remember" },
+  { "source": "bench-results/2026-07-08T18-17-31-runtime-gauntlet", "id": "mem-pad-01", "prompt": "Keep this operational note in mind for later but do not create files: Context pad alpha.", "expectedTool": "remember", "bannedTool": "apple" }
+]
