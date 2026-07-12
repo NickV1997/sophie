@@ -88,6 +88,15 @@ describe("progressive tool disclosure", () => {
     expect(result.content).toContain("coding");
   });
 
+  test("common model group aliases activate assistant tools", async () => {
+    for (const alias of ["email", "messaging", "calendar"]) {
+      resetToolGroups();
+      const result = await loadTools.execute({ group: alias }, { cwd: process.cwd() });
+      expect(result.isError).toBeUndefined();
+      expect(activeToolGroups().has("assistant")).toBe(true);
+    }
+  });
+
   test("dynamic (MCP) groups defer and disclose like built-ins", () => {
     registerDynamicGroup("mcp", "external tools", ["mcp__x__do"]);
     expect(disclosedToolNames([...allNames(), "mcp__x__do"]).has("mcp__x__do")).toBe(false);

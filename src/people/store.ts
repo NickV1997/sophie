@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { memoryHomeDir } from "../memory/facts.ts";
+import { upsertEntity } from "../system/entities.ts";
 
 export interface PersonRecord {
   id: string;           // p_<base36timestamp><random>
@@ -145,6 +146,7 @@ export function upsertPerson(data: Partial<PersonRecord> & { name: string }): Pe
     const idx = records.findIndex((r) => r.id === existing.id);
     records[idx] = merged;
     writeAll(records);
+    upsertEntity("person", merged.id, merged.name, [...merged.aliases, ...merged.emails, ...merged.phones]);
     return merged;
   }
 
@@ -165,6 +167,7 @@ export function upsertPerson(data: Partial<PersonRecord> & { name: string }): Pe
   };
   records.push(record);
   writeAll(records);
+  upsertEntity("person", record.id, record.name, [...record.aliases, ...record.emails, ...record.phones]);
   return record;
 }
 

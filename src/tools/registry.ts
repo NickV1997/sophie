@@ -26,6 +26,9 @@ import { openThing } from "./open_thing.ts";
 import { peopleTool } from "./people.ts";
 import { userProfile } from "./profile.ts";
 import { projectsTool } from "./projects.ts";
+import { privacyTool } from "./privacy.ts";
+import { daemonWork } from "./daemon_work.ts";
+import { activityTool } from "./activity.ts";
 import { schedule } from "./schedule.ts";
 import { scheduleList } from "./schedule_query.ts";
 import { captureScreen } from "./screen.ts";
@@ -45,6 +48,7 @@ import { searchVerifiedMemory } from "./verified_memory.ts";
 import { webFetch, webSearch } from "./web.ts";
 import { stopWebApp } from "./webapp.ts";
 import type { Tool, ToolSpec } from "./types.ts";
+import { toolSupportedOnPlatform } from "../system/platform-capabilities.ts";
 
 /** All tools Sophie can use, keyed by name. */
 export const TOOLS: Tool[] = [
@@ -117,12 +121,15 @@ export const TOOLS: Tool[] = [
   peopleTool,
   projectsTool,
   delegateTool,
+  privacyTool,
+  daemonWork,
+  activityTool,
 ];
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
 
 export function getTool(name: string): Tool | undefined {
-  return byName.get(name);
+  return toolSupportedOnPlatform(name) ? byName.get(name) : undefined;
 }
 
 /**
@@ -150,7 +157,7 @@ export function registerMcpTools(tools: Tool[]): void {
 }
 
 export function toolSpecs(): ToolSpec[] {
-  return TOOLS.map(({ name, description, parameters, preconditions }) => ({
+  return TOOLS.filter((tool) => toolSupportedOnPlatform(tool.name)).map(({ name, description, parameters, preconditions }) => ({
     name,
     description,
     parameters,

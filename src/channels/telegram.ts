@@ -16,9 +16,10 @@
  */
 
 const API = "https://api.telegram.org";
+import { getSecret } from "../system/secrets.ts";
 
 export function telegramToken(): string {
-  return (process.env.TELEGRAM_BOT_TOKEN ?? "").trim();
+  return getSecret("TELEGRAM_BOT_TOKEN");
 }
 
 export function telegramChatId(): string {

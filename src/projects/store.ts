@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { memoryHomeDir } from "../memory/facts.ts";
+import { findEntities, linkEntities, upsertEntity } from "../system/entities.ts";
 
 export type ProjectStatus = "active" | "paused" | "completed" | "archived";
 
@@ -131,6 +132,7 @@ export function upsertProject(data: Partial<Project> & { name: string }): Projec
     const idx = records.findIndex((r) => r.id === existing.id);
     records[idx] = merged;
     writeAll(records);
+    syncProjectEntity(merged);
     return merged;
   }
 
@@ -148,7 +150,18 @@ export function upsertProject(data: Partial<Project> & { name: string }): Projec
   };
   records.push(record);
   writeAll(records);
+  syncProjectEntity(record);
   return record;
+}
+
+function syncProjectEntity(project: Project): void {
+  const entity = upsertEntity("project", project.id, project.name);
+  for (const stakeholder of project.stakeholders) {
+    const person = findEntities(stakeholder, "person").find((item) =>
+      item.name.toLowerCase() === stakeholder.toLowerCase() ||
+      item.aliases.some((alias) => alias.toLowerCase() === stakeholder.toLowerCase()));
+    if (person) linkEntities(entity.id, person.id, "has_stakeholder");
+  }
 }
 
 /** Add a milestone to a project. */

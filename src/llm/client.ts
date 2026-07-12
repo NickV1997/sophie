@@ -2,6 +2,12 @@ import { config } from "../config.ts";
 
 let activeModel = config.model;
 
+/** Model id currently selected after startup discovery. Tool-protocol
+ * selection uses this rather than trusting a possibly stale configured id. */
+export function getActiveModel(): string {
+  return activeModel;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: ChatContent;
@@ -12,6 +18,56 @@ export type ChatContent = string | ChatContentPart[];
 export type ChatContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
+
+/** Collect OpenAI-compatible streamed tool-call deltas and normalize them to
+ * Sophie's canonical tagged JSON. llama.cpp's native chat parsers (GLM,
+ * GPT-OSS, Gemma, Qwen, and future supported templates) may move a model's raw
+ * call out of `content` and into `delta.tool_calls`; without this bridge the
+ * agent sees an empty response and repeatedly nudges the model. */
+export class NativeToolCallAccumulator {
+  private calls = new Map<number, { name: string; arguments: string | Record<string, unknown> }>();
+
+  push(value: unknown): void {
+    if (!Array.isArray(value)) return;
+    for (let position = 0; position < value.length; position++) {
+      const delta: any = value[position];
+      if (!delta || typeof delta !== "object") continue;
+      const index = Number.isInteger(delta.index) ? delta.index : position;
+      const fn = delta.function && typeof delta.function === "object" ? delta.function : delta;
+      const current = this.calls.get(index) ?? { name: "", arguments: "" };
+      if (typeof fn.name === "string") current.name += fn.name;
+      if (typeof fn.arguments === "string") {
+        current.arguments = typeof current.arguments === "string" ? current.arguments + fn.arguments : fn.arguments;
+      } else if (fn.arguments && typeof fn.arguments === "object") {
+        current.arguments = fn.arguments;
+      }
+      this.calls.set(index, current);
+    }
+  }
+
+  render(): string {
+    return [...this.calls.entries()]
+      .sort(([a], [b]) => a - b)
+      .flatMap(([, call]) => {
+        const name = call.name.trim();
+        if (!name) return [];
+        let args: Record<string, unknown> = {};
+        if (typeof call.arguments === "string") {
+          try {
+            const parsed = JSON.parse(call.arguments || "{}");
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed;
+          } catch {
+            // Preserve malformed native arguments for the existing repair path.
+            return [`<tool_call>${JSON.stringify({ name, arguments: call.arguments })}</tool_call>`];
+          }
+        } else {
+          args = call.arguments;
+        }
+        return [`<tool_call>${JSON.stringify({ name, arguments: args })}</tool_call>`];
+      })
+      .join("\n");
+  }
+}
 
 export interface CompletionOptions {
   /** Override temperature (plan vs normal mode tune this). */
@@ -254,6 +310,7 @@ export async function* streamChat(
   // that pass raw text through, reasoning_content never appears and this is
   // a no-op.
   let inReasoning = false;
+  const nativeToolCalls = new NativeToolCallAccumulator();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -269,11 +326,14 @@ export async function* streamChat(
       const data = line.slice(5).trim();
       if (data === "[DONE]") {
         if (inReasoning) yield "</think>";
+        const calls = nativeToolCalls.render();
+        if (calls) yield calls;
         return;
       }
       try {
         const json = JSON.parse(data);
         const delta = json.choices?.[0]?.delta ?? {};
+        nativeToolCalls.push(delta.tool_calls);
         const reasoning: string | undefined = delta.reasoning_content;
         if (reasoning) {
           if (!inReasoning) {

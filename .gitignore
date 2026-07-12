@@ -5,9 +5,19 @@ node_modules/
 .env
 .env.*
 !.env.example
+.npmrc
+.yarnrc.yml
+.netrc
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
 
 # Sophie runtime state: your memories, persona, onboarding flag, TTS cache
 .sophie/
+/SOPHIE.md
 
 # local Python venv for the TTS sidecar (self-ignoring, but be explicit)
 .tts-venv/

@@ -10,10 +10,12 @@
  * (recursive) with per-watcher debounce so a burst of writes — a download, a
  * build — fires once, after it settles. Partial/temp files are ignored.
  */
-import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { basename, join } from "node:path";
 import { MEMORY_DIR } from "../memory/store.ts";
 import { expandHome } from "../system/paths.ts";
+import { readJsonWithRecovery, writePrivateFileAtomic } from "../system/atomic-file.ts";
+import type { AuthorizationSnapshot } from "./scheduler.ts";
 
 export type WatchAction = "notify" | "run";
 
@@ -33,6 +35,7 @@ export interface WatchItem {
   enabled: boolean;
   createdAt: number;
   lastFiredAt?: number;
+  authorization?: AuthorizationSnapshot;
 }
 
 export const WATCHERS_PATH = join(MEMORY_DIR, "watchers.json");
@@ -46,7 +49,7 @@ function load(): WatchItem[] {
   if (items) return items;
   if (!existsSync(WATCHERS_PATH)) return (items = []);
   try {
-    const parsed = JSON.parse(readFileSync(WATCHERS_PATH, "utf8"));
+    const parsed: any = readJsonWithRecovery(WATCHERS_PATH);
     const list: unknown[] = Array.isArray(parsed?.items) ? parsed.items : [];
     items = list.filter((x): x is WatchItem => !!x && typeof (x as any).id === "string");
   } catch {
@@ -57,7 +60,7 @@ function load(): WatchItem[] {
 
 function persist(): void {
   if (!existsSync(MEMORY_DIR)) mkdirSync(MEMORY_DIR, { recursive: true });
-  writeFileSync(WATCHERS_PATH, `${JSON.stringify({ items: items ?? [] }, null, 2)}\n`);
+  writePrivateFileAtomic(WATCHERS_PATH, `${JSON.stringify({ schemaVersion: 1, items: items ?? [] }, null, 2)}\n`);
 }
 
 function newId(): string {
@@ -76,6 +79,7 @@ export function addWatcher(input: {
   prompt?: string;
   glob?: string;
   debounceMs?: number;
+  authorization?: AuthorizationSnapshot;
 }): WatchItem {
   const list = load();
   const item: WatchItem = {
@@ -89,6 +93,7 @@ export function addWatcher(input: {
     debounceMs: input.debounceMs,
     enabled: true,
     createdAt: Date.now(),
+    authorization: input.authorization,
   };
   list.push(item);
   persist();

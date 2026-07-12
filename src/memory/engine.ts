@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type { TurnIntent } from "../agent/intent.ts";
 import { estimateTokens } from "../agent/context.ts";
 import { getCurrentJob, getJournal, getObjective } from "../agent/tasks.ts";
-import { addMemory, listMemories, memoryHomeDir, tokenize, type MemoryRecord } from "./facts.ts";
+import { addMemory, listMemories, tokenize, type MemoryRecord } from "./facts.ts";
+import { MAX_CAPSULE_CHARS, MAX_FULL_CHARS, capsuleFrom, newEngineMemoryId, oneLine, readEngineStore, writeEngineStore } from "./engine_store.ts";
 
 export type EngineMemoryKind =
   | "user"
@@ -55,59 +54,6 @@ export interface SaveEngineMemoryInput {
 export interface MemoryIntake {
   memories: { capsule: string; scope: EngineMemoryScope; kind: EngineMemoryKind }[];
   summary: string;
-}
-
-const STORE = "memory.engine.jsonl";
-const MAX_CAPSULE_CHARS = 180;
-const MAX_FULL_CHARS = 1200;
-
-function nowId(): string {
-  return `em_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function globalPath(): string {
-  return join(memoryHomeDir(), STORE);
-}
-
-function projectPath(cwd: string): string {
-  return join(cwd, ".sophie", STORE);
-}
-
-function pathFor(scope: EngineMemoryScope, cwd: string): string {
-  return scope === "project" ? projectPath(cwd) : globalPath();
-}
-
-function oneLine(text: string, max = MAX_CAPSULE_CHARS): string {
-  const clean = text.replace(/\s+/g, " ").trim();
-  return clean.length > max ? `${clean.slice(0, max).trimEnd()}...` : clean;
-}
-
-function capsuleFrom(full: string): string {
-  const first = full.split(/[.!?]\s+/)[0] ?? full;
-  return oneLine(first, MAX_CAPSULE_CHARS);
-}
-
-function readEngineStore(scope: EngineMemoryScope, cwd: string): EngineMemory[] {
-  const path = pathFor(scope, cwd);
-  if (!existsSync(path)) return [];
-  const out: EngineMemory[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    try {
-      const rec = JSON.parse(t) as EngineMemory;
-      if (rec?.capsule && rec?.full) out.push(rec);
-    } catch {
-      /* skip corrupt lines */
-    }
-  }
-  return out;
-}
-
-function writeEngineStore(scope: EngineMemoryScope, cwd: string, records: EngineMemory[]): void {
-  const path = pathFor(scope, cwd);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, records.map((r) => JSON.stringify(r)).join("\n") + (records.length ? "\n" : ""));
 }
 
 function jaccard(a: string[], b: string[]): number {
@@ -163,7 +109,7 @@ export function saveEngineMemory(input: SaveEngineMemoryInput, cwd: string): { a
     return { action: "merged", record: merged };
   }
   const record: EngineMemory = {
-    id: nowId(),
+    id: newEngineMemoryId(),
     kind: input.kind,
     scope,
     capsule,

@@ -29,4 +29,12 @@ describe("history budget cap (compaction fires regardless of window size)", () =
     // constraint — we never inflate history to the cap when the window is small.
     expect(historyBudget(1000)).toBeLessThan(24_000);
   });
+
+  test("a model-tier cap keeps small-model working history lean", () => {
+    config.contextWindow = 200_000;
+    config.maxHistoryTokens = 40_000;
+    setContextWindow(200_000);
+    expect(historyBudget(6000, 12_000)).toBe(12_000);
+    expect(historyBudget(6000, 40_000)).toBe(40_000);
+  });
 });

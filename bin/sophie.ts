@@ -10,6 +10,8 @@ Usage:
   sophie webapp       Start the Sophie web app (phone-friendly, Tailscale-ready)
   sophie webapp stop  Stop the Sophie web app
   sophie doctor       Check install, .env, and model server reachability
+  sophie daemon install|start|stop|status
+  sophie secrets migrate   Copy configured secrets into macOS Keychain
   sophie --help       Show this help
   sophie --version    Show the installed version
 
@@ -103,6 +105,24 @@ if (args.includes("--version") || args.includes("-v")) {
 
 if (args[0] === "doctor") {
   await doctor();
+}
+
+if (args[0] === "daemon") {
+  const action = args[1] ?? "status";
+  const { runDaemon, readDaemonStatus } = await import("../src/daemon/service.ts");
+  const { DAEMON_LABEL, PLIST_PATH, installLaunchAgent } = await import("../src/daemon/launchd.ts");
+  if (action === "run") await runDaemon();
+  if (action === "install") { const path = installLaunchAgent(); process.stdout.write(`Installed ${path}\nRun: sophie daemon start\n`); process.exit(0); }
+  if (action === "start") { const p = Bun.spawnSync(["launchctl", "bootstrap", `gui/${process.getuid?.() ?? 0}`, PLIST_PATH]); process.stdout.write(p.stderr.toString() || "Sophie daemon started.\n"); process.exit(p.exitCode); }
+  if (action === "stop") { const p = Bun.spawnSync(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${DAEMON_LABEL}`]); process.stdout.write(p.stderr.toString() || "Sophie daemon stopped.\n"); process.exit(p.exitCode); }
+  const s = readDaemonStatus(); process.stdout.write(s ? `Sophie daemon: ${s.state}, pid ${s.pid}, heartbeat ${new Date(s.heartbeatAt).toLocaleString()}\n` : "Sophie daemon: offline\n"); process.exit(s?.state === "online" && Date.now() - s.heartbeatAt < 45_000 ? 0 : 1);
+}
+
+if (args[0] === "secrets" && args[1] === "migrate") {
+  const { migrateEnvSecretsToKeychain } = await import("../src/system/secrets.ts");
+  const keys = migrateEnvSecretsToKeychain(false);
+  process.stdout.write(keys.length ? `Stored in macOS Keychain: ${keys.join(", ")}\nYou may now blank those values in .env.\n` : "No configured secrets were migrated.\n");
+  process.exit(keys.length ? 0 : 1);
 }
 
 if (args[0] === "webapp") {

@@ -4,6 +4,7 @@ import {
   getEvent,
   listEvents,
   setEventExternal,
+  upsertExternalEvent,
   type CalendarEvent,
 } from "./store.ts";
 
@@ -96,6 +97,18 @@ export async function syncUpcomingCalendarEvents(days = 90): Promise<CalendarSyn
   const out: CalendarSyncResult[] = [];
   for (const ev of events) out.push(...await syncCalendarEvent(ev));
   return out;
+}
+
+export async function reconcileFromAppleCalendar(from = Date.now() - 7 * 86_400_000, to = Date.now() + 90 * 86_400_000): Promise<CalendarSyncResult> {
+  if (!appleCalendarAvailable()) return { provider: "apple", ok: true, detail: "Using built-in calendar fallback" };
+  const script = "function run(argv){const app=Application('Calendar');const from=new Date(Number(argv[0])),to=new Date(Number(argv[1]));const rows=[];for(const cal of app.calendars()){let es=[];try{es=cal.events.whose({startDate:{_lessThan:to},endDate:{_greaterThan:from}})();}catch(e){continue;}for(const ev of es){try{rows.push({id:ev.id(),title:ev.summary()||'Untitled event',start:ev.startDate().getTime(),end:ev.endDate().getTime(),location:ev.location()||'',notes:ev.description()||'',calendar:cal.name()});}catch(e){}}}return JSON.stringify(rows);}";
+  const res = await runOsa(script, { lang: "JavaScript", args: [String(from), String(to)] });
+  if (!res.ok) return { provider: "apple", ok: false, detail: res.err || "Apple Calendar import failed" };
+  try {
+    const rows = JSON.parse(res.out || "[]") as Array<{ id: string; title: string; start: number; end: number; location?: string; notes?: string }>;
+    for (const row of rows) if (row.id && Number.isFinite(row.start) && Number.isFinite(row.end)) upsertExternalEvent({ appleId: row.id, title: row.title, start: row.start, end: row.end, location: row.location, notes: row.notes });
+    return { provider: "apple", ok: true, detail: `Imported ${rows.length} Apple Calendar event${rows.length === 1 ? "" : "s"}` };
+  } catch { return { provider: "apple", ok: false, detail: "Apple Calendar returned invalid event data" }; }
 }
 
 export function calendarSyncStatus(): string {

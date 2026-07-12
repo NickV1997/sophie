@@ -198,7 +198,8 @@ async function listMailbox(kind: "unread" | "all" | "drafts", limit: number): Pr
     for (const uid of selected) {
       const raw = await imap.fetchRaw(uid);
       const h = parseHeaders(raw);
-      rows.push(`${uid} | ${h.from ?? "(unknown)"} | ${h.date ?? ""} | ${h.subject ?? "(no subject)"}`);
+      const snippet = plainText(raw, 180).replace(/\s+/g, " ");
+      rows.push(`${uid} | ${h.from ?? "(unknown)"} | ${h.date ?? ""} | ${h.subject ?? "(no subject)"}${snippet ? ` | Preview: ${snippet}` : ""}`);
     }
     return rows.join("\n");
   } finally {
@@ -282,13 +283,14 @@ export const emailTool: Tool = {
   name: "email",
   description:
     "Gmail over the user's app password. Read messages (unread/all), read Gmail drafts, manage local Sophie draft messages, and send email. " +
-    "Actions: list_unread, list_all, list_gmail_drafts, read, draft_create, draft_list, draft_update, draft_delete, send, draft_send.",
+    "Actions: list_unread, list_all, list_gmail_drafts, read, draft_create, draft_list, draft_update, draft_delete, send, draft_send. " +
+    "To read a message: first list it, copy the exact UID from the first column, then call read with that uid. Never call read without uid.",
   preconditions: ["Requires setup wizard email fields: Gmail address, Gmail app password, IMAP host/port, SMTP host/port."],
   parameters: {
     type: "object",
     properties: {
       action: { type: "string", enum: ["list_unread", "list_all", "list_gmail_drafts", "read", "draft_create", "draft_list", "draft_update", "draft_delete", "send", "draft_send"] },
-      uid: { type: "string", description: "IMAP UID to read." },
+      uid: { type: "string", description: "Required for read: exact IMAP UID from the first column of list_unread/list_all output." },
       mailbox: { type: "string", description: "Mailbox for read, default INBOX." },
       limit: { type: "number", description: "Max messages to list, default 10." },
       draft_id: { type: "string", description: "Local Sophie draft id." },

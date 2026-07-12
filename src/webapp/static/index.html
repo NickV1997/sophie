@@ -417,6 +417,10 @@
   .cal-day.today { border-color: rgba(255,46,166,0.6); background: rgba(255,46,166,0.06); }
   .cal-day-num { font-size: 12.5px; font-weight: 600; color: var(--soft); }
   .cal-day.today .cal-day-num { color: var(--pink); }
+  .cal-day.past { opacity: 0.5; }
+  .cal-day.past:hover { opacity: 0.8; }
+  .cal-day.past .cal-chip { border-left-color: rgba(255,255,255,0.28); background: rgba(255,255,255,0.06); }
+  .cal-day.past .cal-chip .h { color: var(--dim); }
   .cal-chip {
     font-size: 11px; line-height: 1.35; color: var(--text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -457,6 +461,15 @@
   .day-body { overflow-y: auto; min-height: 0; padding: 4px 16px 18px; -webkit-overflow-scrolling: touch; }
   .day-allday { display: grid; gap: 6px; margin: 10px 0 2px; }
   .day-timeline { position: relative; margin-top: 12px; height: calc(24 * 44px); }
+  .day-timeline.addable { cursor: pointer; }
+  .now-line {
+    position: absolute; left: 48px; right: 0; z-index: 3; pointer-events: none;
+    border-top: 2px solid var(--pink);
+  }
+  .now-line::before {
+    content: ""; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px;
+    border-radius: 999px; background: var(--pink);
+  }
   .hour-row { position: absolute; left: 0; right: 0; height: 44px; border-top: 1px solid rgba(255,255,255,0.06); }
   .hour-label {
     position: absolute; left: 0; top: -8px; width: 48px;
@@ -2480,7 +2493,8 @@
       const evs = eventsOverlapping(dayStart, dayEnd);
       const cell = document.createElement("button");
       cell.type = "button";
-      cell.className = "cal-day" + (d.getMonth() !== month ? " other" : "") + (dayStart === todayStart ? " today" : "");
+      cell.className = "cal-day" + (d.getMonth() !== month ? " other" : "") +
+        (dayStart === todayStart ? " today" : "") + (dayStart < todayStart ? " past" : "");
       const num = document.createElement("div");
       num.className = "cal-day-num";
       num.textContent = String(d.getDate());
@@ -2521,10 +2535,14 @@
     els.dayModal.hidden = true;
   }
 
+  function isPastDay(dayStartMs) {
+    return dayStartMs < dayBounds(Date.now()).start;
+  }
+
   function renderDayModal() {
     if (state.calSelectedDay == null) return;
     els.dayTitle.textContent = calDayFmt.format(new Date(state.calSelectedDay));
-    els.dayAdd.hidden = Boolean(state.calEditing);
+    els.dayAdd.hidden = Boolean(state.calEditing) || isPastDay(state.calSelectedDay);
     if (state.calEditing) renderEventForm();
     else renderDayTimeline();
   }
@@ -2570,6 +2588,8 @@
 
   function renderDayTimeline() {
     const { start: dayStart, end: dayEnd } = dayBounds(state.calSelectedDay);
+    const past = isPastDay(dayStart);
+    const isToday = dayStart === dayBounds(Date.now()).start;
     const body = els.dayBody;
     body.innerHTML = "";
     const evs = eventsOverlapping(dayStart, dayEnd);
@@ -2577,12 +2597,24 @@
     if (!evs.length) {
       const empty = document.createElement("div");
       empty.className = "day-empty";
-      empty.textContent = "Nothing scheduled. Tap “+ Add event” to book something.";
+      empty.textContent = past
+        ? "Nothing was scheduled this day."
+        : "Nothing scheduled. Tap a time slot or “+ Add event” to book something.";
       body.appendChild(empty);
     }
 
     const tl = document.createElement("div");
-    tl.className = "day-timeline";
+    tl.className = "day-timeline" + (past ? "" : " addable");
+    if (!past) {
+      // Tap an empty slot to start a new event at that hour (taps on an
+      // existing event fall through to its own edit handler).
+      tl.addEventListener("click", (e) => {
+        if (e.target.closest(".day-event")) return;
+        const hour = Math.max(0, Math.min(23, Math.floor((e.clientY - tl.getBoundingClientRect().top) / HOUR_PX)));
+        state.calEditing = { id: "", start: dayStart + hour * 3_600_000 };
+        renderDayModal();
+      });
+    }
     for (let h = 0; h < 24; h++) {
       const row = document.createElement("div");
       row.className = "hour-row";
@@ -2619,9 +2651,17 @@
       layer.appendChild(el);
     }
     tl.appendChild(layer);
+    if (isToday) {
+      const line = document.createElement("div");
+      line.className = "now-line";
+      line.style.top = `${((Date.now() - dayStart) / 3_600_000) * HOUR_PX}px`;
+      tl.appendChild(line);
+    }
     body.appendChild(tl);
-    // Open at the first event, or 08:00 on an empty day.
-    const focusMs = evs.length ? Math.max(evs[0].start, dayStart) : dayStart + 8 * 3_600_000;
+    // Open at the first event; on an empty day, the current time (today) or 08:00.
+    const focusMs = evs.length
+      ? Math.max(evs[0].start, dayStart)
+      : (isToday ? Date.now() : dayStart + 8 * 3_600_000);
     requestAnimationFrame(() => {
       body.scrollTop = Math.max(0, ((focusMs - dayStart) / 3_600_000) * HOUR_PX - 20);
     });
@@ -2640,10 +2680,17 @@
   function renderEventForm() {
     const editing = state.calEditing && state.calEditing.id ? state.calEditing : null;
     const dayStart = dayBounds(state.calSelectedDay).start;
+    // New events start at the tapped slot, the next full hour (today), or 09:00.
+    let defaultStart = dayStart + 9 * 3_600_000;
+    if (!editing && Number.isFinite(state.calEditing?.start)) {
+      defaultStart = state.calEditing.start;
+    } else if (!editing && dayStart === dayBounds(Date.now()).start) {
+      defaultStart = dayStart + Math.min(23, new Date().getHours() + 1) * 3_600_000;
+    }
     const defaults = editing ?? {
       title: "",
-      start: dayStart + 9 * 3_600_000,
-      end: dayStart + 10 * 3_600_000,
+      start: defaultStart,
+      end: defaultStart + 3_600_000,
       location: "",
       notes: "",
       reminderLeads: [30, 5],
@@ -2671,6 +2718,9 @@
 
     const titleInput = textInput(defaults.title, "What is it?");
     const dateInput = textInput(toDateInput(defaults.start), "", "date");
+    // No booking on days that have already passed; an event already sitting on
+    // a past day may stay there (so its own date remains pickable).
+    dateInput.min = toDateInput(editing ? Math.min(editing.start, Date.now()) : Date.now());
     const startInput = textInput(toTimeInput(defaults.start), "", "time");
     const endInput = textInput(toTimeInput(defaults.end), "", "time");
     const locationInput = textInput(defaults.location || "", "Place, address, or meeting link");
@@ -2741,6 +2791,13 @@
       const endMatch = endInput.value.match(/^(\d{2}):(\d{2})/);
       if (!dateMatch || !startMatch || !endMatch) { error.textContent = "Date, start, and end are required."; return; }
       const [, y, mo, da] = dateMatch.map(Number);
+      const chosenDayStart = new Date(y, mo - 1, da).getTime();
+      if (chosenDayStart < dayBounds(Date.now()).start && (!editing || chosenDayStart !== dayBounds(editing.start).start)) {
+        error.textContent = editing
+          ? "Events can't be moved to a day that's already passed."
+          : "Events can't be added to a day that's already passed.";
+        return;
+      }
       const start = new Date(y, mo - 1, da, Number(startMatch[1]), Number(startMatch[2])).getTime();
       let end = new Date(y, mo - 1, da, Number(endMatch[1]), Number(endMatch[2])).getTime();
       if (end <= start) end += 86_400_000; // crosses midnight

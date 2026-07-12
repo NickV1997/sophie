@@ -13,7 +13,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-MODEL_DIR = os.environ.get("SOPHIE_MODEL_DIR", os.path.expanduser("~/Desktop/local_models"))
+MODEL_DIR = os.environ.get("SOPHIE_MODEL_DIR", os.path.expanduser("~/.local/share/sophie/models"))
 MODEL_PATH = os.environ.get("SOPHIE_TTS_MODEL", os.path.join(MODEL_DIR, "tts/kokoro-v1.0.onnx"))
 VOICES_PATH = os.environ.get("SOPHIE_TTS_VOICES", os.path.join(MODEL_DIR, "tts/voices-v1.0.bin"))
 DEFAULT_SPEAKER = os.environ.get("SOPHIE_TTS_SPEAKER", os.environ.get("SOPHIE_SPEAK_VOICE", "bf_emma"))

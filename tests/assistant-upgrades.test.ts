@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isNewerVersion } from "../src/system/update.ts";
 import { textFromAttributedBody } from "../src/tools/apple.ts";
-import { contextFraction, tokensPerSecond, type TurnStats } from "../src/agent/stats.ts";
+import { beginTurnStats, contextFraction, getTurnStats, recordModelRequest, tokensPerSecond, type TurnStats } from "../src/agent/stats.ts";
 import { addMemory } from "../src/memory/facts.ts";
 import { smartRecallForPrompt } from "../src/memory/embeddings.ts";
 import { reloadConfig } from "../src/config.ts";
@@ -64,6 +64,13 @@ describe("turn stats", () => {
     // Degenerate inputs never divide by zero.
     expect(tokensPerSecond({ ...stats, genMs: 0 })).toBe(0);
     expect(contextFraction({ ...stats, ctxWindow: 0 })).toBe(0);
+  });
+  test("tracks model rounds and latest first-token latency", () => {
+    beginTurnStats();
+    recordModelRequest(240);
+    recordModelRequest(180);
+    expect(getTurnStats().modelRequests).toBe(2);
+    expect(getTurnStats().firstTokenMs).toBe(180);
   });
 });
 

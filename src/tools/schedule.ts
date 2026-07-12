@@ -151,7 +151,11 @@ export const schedule: Tool = {
     if (action === "add") return `${a.cron ? `cron ${a.cron}` : a.at ? `at ${a.at}` : `in ${a.in_minutes ?? a.in_hours ?? "?"}${a.in_hours ? "h" : "m"}`}`;
     return a.id ? `${action} ${a.id}` : action;
   },
-  risk: () => "safe",
+  risk: (a) => {
+    const action = String(a.action ?? "list");
+    if (["cancel", "update", "enable", "disable"].includes(action)) return "caution";
+    return action === "add" && a.do === "run" ? "caution" : "safe";
+  },
   async execute(args) {
     const action = String(args.action ?? "list");
 
@@ -221,6 +225,13 @@ export const schedule: Tool = {
     const message = typeof args.message === "string" ? args.message.trim() : "";
     const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
     const voice = false;
+    const authorization = doAction === "run" ? {
+      createdBy: "user" as const,
+      instruction: prompt,
+      allowedCapabilities: ["read_public", "read_private"],
+      outwardAllowed: false,
+      approvedAt: Date.now(),
+    } : undefined;
 
     if (doAction === "notify" && !message) return { content: "A 'notify' schedule needs a message.", isError: true };
     if (doAction === "run" && !prompt) return { content: "A 'run' schedule needs a prompt.", isError: true };
@@ -230,7 +241,7 @@ export const schedule: Tool = {
       if (nextCronTime(cron, Date.now()) == null) {
         return { content: `Invalid cron "${cron}". Use 5 fields: minute hour day month weekday (e.g. "0 9 * * 1-5").`, isError: true };
       }
-      const item = addCron({ title, cron, action: doAction, message, prompt, voice });
+      const item = addCron({ title, cron, action: doAction, message, prompt, voice, authorization });
       const mirrored = await syncMirrors(item, "set");
       return { content: `Recurring job set:\n${renderItem(item)}${mirrored}`, display: `cron ${item.id}` };
     }
@@ -240,7 +251,7 @@ export const schedule: Tool = {
       return { content: "Need a time: in_minutes, in_hours, an absolute 'at', or a 'cron' expression.", isError: true };
     }
     if (at <= Date.now()) return { content: "That time is in the past.", isError: true };
-    const item = addOnce({ title, at, action: doAction, message, prompt, voice });
+    const item = addOnce({ title, at, action: doAction, message, prompt, voice, authorization });
     const mirrored = await syncMirrors(item, "set");
     return { content: `Reminder set:\n${renderItem(item)}${mirrored}`, display: `at ${fmt(at)}` };
   },

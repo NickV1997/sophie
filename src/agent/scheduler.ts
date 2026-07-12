@@ -14,12 +14,21 @@
  * loop fires anything due and hands it to the caller-supplied onFire callback,
  * which the TUI turns into a notification or an autonomous turn.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MEMORY_DIR } from "../memory/store.ts";
+import { readJsonWithRecovery, writePrivateFileAtomic } from "../system/atomic-file.ts";
 
 export type ScheduleKind = "once" | "cron";
 export type ScheduleAction = "notify" | "run";
+export interface AuthorizationSnapshot {
+  createdBy: "user" | "telegram" | "webapp";
+  instruction: string;
+  allowedCapabilities: string[];
+  outwardAllowed: boolean;
+  approvedAt: number;
+  expiresAt?: number;
+}
 
 export interface ScheduleItem {
   id: string;
@@ -41,6 +50,7 @@ export interface ScheduleItem {
   voice?: boolean;
   /** External copies kept in sync (e.g. the macOS Reminders app). */
   mirror?: { appleId?: string };
+  authorization?: AuthorizationSnapshot;
 }
 
 export const SCHEDULE_PATH = join(MEMORY_DIR, "schedule.json");
@@ -55,7 +65,7 @@ function load(): ScheduleItem[] {
   if (items) return items;
   if (!existsSync(SCHEDULE_PATH)) return (items = []);
   try {
-    const parsed = JSON.parse(readFileSync(SCHEDULE_PATH, "utf8"));
+    const parsed: any = readJsonWithRecovery(SCHEDULE_PATH);
     const list: unknown[] = Array.isArray(parsed?.items) ? parsed.items : Array.isArray(parsed) ? parsed : [];
     items = list.filter((x): x is ScheduleItem => !!x && typeof (x as any).id === "string");
   } catch {
@@ -66,7 +76,12 @@ function load(): ScheduleItem[] {
 
 function persist(): void {
   ensureDir();
-  writeFileSync(SCHEDULE_PATH, `${JSON.stringify({ items: items ?? [] }, null, 2)}\n`);
+  writePrivateFileAtomic(SCHEDULE_PATH, `${JSON.stringify({ schemaVersion: 1, items: items ?? [] }, null, 2)}\n`);
+}
+
+/** True when an enabled persisted item still exists. Used by startup repair. */
+export function hasActiveSchedule(id: string): boolean {
+  return load().some((item) => item.id === id && item.enabled);
 }
 
 function newId(): string {
@@ -91,6 +106,7 @@ export function addOnce(input: {
   message?: string;
   prompt?: string;
   voice?: boolean;
+  authorization?: AuthorizationSnapshot;
 }): ScheduleItem {
   const list = load();
   const item: ScheduleItem = {
@@ -104,6 +120,7 @@ export function addOnce(input: {
     createdAt: Date.now(),
     enabled: true,
     voice: input.voice,
+    authorization: input.authorization,
   };
   list.push(item);
   persist();
@@ -118,6 +135,7 @@ export function addCron(input: {
   message?: string;
   prompt?: string;
   voice?: boolean;
+  authorization?: AuthorizationSnapshot;
 }): ScheduleItem {
   const next = nextCronTime(input.cron, Date.now());
   if (next == null) throw new Error(`invalid cron expression: "${input.cron}"`);
@@ -134,6 +152,7 @@ export function addCron(input: {
     createdAt: Date.now(),
     enabled: true,
     voice: input.voice,
+    authorization: input.authorization,
   };
   list.push(item);
   persist();
@@ -212,29 +231,33 @@ export function setScheduleEnabled(id: string, enabled: boolean): ScheduleItem |
  * async; failures are swallowed so one bad item can't stop the clock.
  */
 export function startScheduler(onFire: (item: ScheduleItem) => void | Promise<void>, tickMs = 20_000): () => void {
-  const tick = () => {
+  const inFlight = new Set<string>();
+  const tick = async () => {
     const now = Date.now();
     for (const item of load()) {
-      if (!item.enabled || item.nextAt > now) continue;
-      item.lastRunAt = now;
-      if (item.kind === "cron" && item.cron) {
-        const next = nextCronTime(item.cron, now + 1000);
-        if (next != null) item.nextAt = next;
-        else item.enabled = false;
-      } else {
-        item.enabled = false; // one-off: fired, done
-      }
-      persist();
+      if (!item.enabled || item.nextAt > now || inFlight.has(item.id)) continue;
+      inFlight.add(item.id);
       try {
-        void onFire(item);
+        await onFire({ ...item, mirror: item.mirror ? { ...item.mirror } : undefined });
+        item.lastRunAt = Date.now();
+        if (item.kind === "cron" && item.cron) {
+          const next = nextCronTime(item.cron, Date.now() + 1000);
+          if (next != null) item.nextAt = next;
+          else item.enabled = false;
+        } else {
+          item.enabled = false;
+        }
+        persist();
       } catch {
-        /* keep ticking */
+        // Leave it due and enabled. A later tick (or restart) retries delivery.
+      } finally {
+        inFlight.delete(item.id);
       }
     }
   };
-  const timer = setInterval(tick, tickMs);
+  const timer = setInterval(() => void tick(), tickMs);
   (timer as any).unref?.();
-  tick(); // catch anything already overdue at startup (e.g. after a restart)
+  void tick(); // catch anything already overdue at startup (e.g. after a restart)
   return () => clearInterval(timer);
 }
 

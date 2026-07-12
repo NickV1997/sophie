@@ -24,6 +24,8 @@ interface Settings {
   machineId?: string;
   /** guards the one-time machine/location scan. */
   machineScanned?: boolean;
+  /** guards the separately opt-in public-IP location lookup. */
+  locationScanned?: boolean;
 }
 
 function readSettings(): Settings {
@@ -73,17 +75,22 @@ export function markOnboarded(): void {
  * memory lines themselves are upserted so they stay correct if it does.
  */
 export async function scanAndRememberMachine(cwd: string): Promise<void> {
-  if (readSettings().machineScanned) return;
-  writeSettings({ machineScanned: true });
-
-  try {
-    upsertMemory("machine", `Sophie is running on ${machineId()} — ${machineSummary()}.`, cwd, {
-      scope: "user",
-      salience: 0.5,
-    });
-  } catch {
-    /* memory write is best-effort */
+  const settings = readSettings();
+  if (!settings.machineScanned) {
+    writeSettings({ machineScanned: true });
+    try {
+      upsertMemory("machine", `Sophie is running on ${machineId()} — ${machineSummary()}.`, cwd, {
+        scope: "user",
+        salience: 0.5,
+      });
+    } catch {
+      /* memory write is best-effort */
+    }
   }
+
+  const locationEnabled = /^(1|true|yes|on)$/i.test(process.env.SOPHIE_LOCATION_LOOKUP ?? "");
+  if (!locationEnabled || settings.locationScanned) return;
+  writeSettings({ locationScanned: true });
 
   try {
     const res = await fetch(

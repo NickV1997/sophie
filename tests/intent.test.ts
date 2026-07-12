@@ -13,6 +13,11 @@ const staleTasks: Task[] = [
 ];
 
 describe("turn intent routing", () => {
+  test("content containing hello is not mistaken for a greeting", () => {
+    const got = classifyTurnIntent("Create a file called hello.txt containing the text 'Hello Sophie'.", { objective: null, tasks: [] });
+    expect(got.requiresAction).toBe(true);
+    expect(got.expectedTools).toContain("write_file");
+  });
   test("quick Desktop folder check resets stale project work", () => {
     const intent = classifyTurnIntent("is there a folder called test on yhe desktop", {
       objective: staleObjective,
@@ -56,6 +61,12 @@ describe("turn intent routing", () => {
     expect(intent.shouldTrackTasks).toBe(true);
   });
 
+  test("multi-step jobs retain concrete tool hints", () => {
+    const intent = classifyTurnIntent("Check today's calendar, unread email, and recent messages, then build a practical workday plan.", { objective: null, tasks: [] });
+    expect(intent.kind).toBe("new_job");
+    expect(intent.expectedTools).toEqual(expect.arrayContaining(["calendar_list", "email", "apple"]));
+  });
+
   test("explicit continue keeps old work", () => {
     const intent = classifyTurnIntent("continue where you left off", {
       objective: staleObjective,
@@ -81,7 +92,7 @@ const noState = { objective: null, tasks: [] };
 
 describe("intent confidence gating", () => {
   test("a concrete quick check is high-confidence and restricts tools", () => {
-    const intent = classifyTurnIntent("what is in /Users/demo/Desktop/test", noState);
+    const intent = classifyTurnIntent("what is in /tmp/demo/test", noState);
     expect(intent.kind).toBe("quick_check");
     expect(intent.confidence).toBeGreaterThanOrEqual(0.7);
     expect(intent.restrictTools).toBe(true);
@@ -112,5 +123,8 @@ describe("intent confidence gating", () => {
     expect(classifyTurnIntent("What is 18% of 249.99?", noState).expectedTools).toContain("calc");
     expect(classifyTurnIntent("Remember that I prefer concise answers.", noState).expectedTools).toContain("remember");
     expect(classifyTurnIntent("Book me a flight, but ask me for destination first.", noState).expectedTools).toContain("ask_user");
+    expect(classifyTurnIntent("Review my unread email and recent messages.", noState).expectedTools).toEqual(expect.arrayContaining(["email", "apple"]));
+    expect(classifyTurnIntent("Find a conflict-free meeting slot.", noState).expectedTools).toContain("calendar_find_free");
+    expect(classifyTurnIntent("Create a Carter project, add Jamie as stakeholder, and add a high-priority task.", noState).expectedTools).toEqual(expect.arrayContaining(["people", "projects", "manage_tasks"]));
   });
 });

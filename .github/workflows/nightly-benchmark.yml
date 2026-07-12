@@ -1,0 +1,20 @@
+name: nightly-benchmark-contract
+on:
+  schedule:
+    - cron: "20 7 * * *"
+  workflow_dispatch:
+jobs:
+  deterministic-runtime:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test tests/app-benchmark.test.ts tests/capabilities.test.ts tests/daemon-queue.test.ts tests/prompt-budget.test.ts
+      - run: bun test tests/founder-week.test.ts tests/action-quality.test.ts tests/model-gate.test.ts tests/replay-bad-sessions.test.ts
+      - run: bun test tests/protocol-cache.test.ts tests/performance-gate.test.ts tests/model-profile.test.ts
+      - run: bun test tests/real-world-benchmark.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline-and-contracts
+          path: src/bench/baselines/

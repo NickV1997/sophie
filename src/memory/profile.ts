@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { memoryHomeDir, upsertMemory } from "./facts.ts";
+import { writePrivateFileAtomic } from "../system/atomic-file.ts";
 
 /**
  * The user PROFILE — structured getting-to-know-you answers (routine, work
@@ -29,7 +30,7 @@ export interface ProfileQuestion {
 
 export const PROFILE_QUESTIONS: ProfileQuestion[] = [
   { key: "name", category: "Basics", question: "What should I call you?",
-    placeholder: "e.g. Nick",
+    placeholder: "e.g. Alex",
     sentence: (v) => `The user's name is ${v}.` },
   { key: "wake_time", category: "Routine", question: "When do you usually wake up?",
     placeholder: "e.g. 7:30am weekdays, 9am weekends",
@@ -139,7 +140,7 @@ export function saveProfileAnswers(answers: Record<string, string>, cwd: string)
   }
   const dir = memoryHomeDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(profilePath(), `${JSON.stringify(profile, null, 2)}\n`);
+  writePrivateFileAtomic(profilePath(), `${JSON.stringify(profile, null, 2)}\n`);
   return saved;
 }
 

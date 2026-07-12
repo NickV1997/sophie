@@ -6,7 +6,7 @@ export interface DeterministicToolCall {
   raw: string;
 }
 
-const DETERMINISTIC_TOOLS = new Set(["current_time", "calc", "system_info", "where_am_i", "weather"]);
+const DETERMINISTIC_TOOLS = new Set(["current_time", "calc", "system_info", "where_am_i", "weather", "schedule_list", "calendar_list", "email", "apple", "write_file"]);
 
 export function deterministicToolCallForInput(input: string, intent: TurnIntent): DeterministicToolCall | null {
   return deterministicToolCallForMissingInput(input, intent, new Set());
@@ -17,16 +17,33 @@ export function deterministicToolCallForMissingInput(
   intent: TurnIntent,
   alreadySucceeded: ReadonlySet<string>,
 ): DeterministicToolCall | null {
-  const expected = intent.expectedTools?.find((tool) => DETERMINISTIC_TOOLS.has(tool) && !alreadySucceeded.has(tool));
-  if (!expected) return null;
   const text = input.toLowerCase();
+  const expected = intent.expectedTools?.find((tool) => DETERMINISTIC_TOOLS.has(tool) && !alreadySucceeded.has(tool) && deterministicApplicable(tool, text));
+  if (!expected) return null;
   if (expected === "calc") return calcCallForInput(input);
   if (expected === "weather") return call("weather", weatherArgsForInput(input));
   if (expected === "system_info") return call("system_info", {});
   if (expected === "where_am_i") return call("where_am_i", {});
   if (expected === "current_time") return call("current_time", {});
+  if (expected === "schedule_list") return call("schedule_list", {});
+  if (expected === "calendar_list") return call("calendar_list", { range: /\btomorrow\b/.test(text) ? "tomorrow" : /\bweek\b/.test(text) ? "week" : "today" });
+  if (expected === "email") return call("email", { action: "list_unread", limit: 20 });
+  if (expected === "apple") return call("apple", { action: "messages_recent", limit: 20 });
+  if (expected === "write_file") return writeFileCallForInput(input);
   if (/\b(today|time|date|day|until|now|right now)\b/.test(text)) return call("current_time", {});
   return null;
+}
+
+function deterministicApplicable(tool: string, text: string): boolean {
+  if (tool === "email") return /\b(unread|inbox|mailbox|check (?:my )?(?:email|mail)|review (?:my )?(?:email|mail)|read (?:my )?(?:email|mail))\b/.test(text);
+  if (tool === "apple") return /\b(recent messages?|check (?:my )?(?:messages|texts)|review (?:my )?(?:messages|texts)|read (?:my )?(?:messages|texts))\b/.test(text);
+  return true;
+}
+
+function writeFileCallForInput(input: string): DeterministicToolCall | null {
+  const match = /(?:create|write|make)\s+(?:a\s+)?file(?:\s+called|\s+named)?\s+[`"']?([^\s`"']+)[`"']?\s+(?:containing(?:\s+the)?\s+(?:text|content)|with(?:\s+the)?\s+(?:text|content))\s+[`"']([\s\S]*?)[`"']\.?$/i.exec(input.trim());
+  if (!match) return null;
+  return call("write_file", { path: match[1], content: match[2] });
 }
 
 function call(name: string, args: Record<string, unknown>): DeterministicToolCall {
