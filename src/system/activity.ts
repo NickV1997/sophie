@@ -16,11 +16,15 @@ export interface ActivityRecord {
 }
 
 let db: Database | null = null;
+let activePath: string | null = null;
 function getDb(): Database {
-  if (db) return db;
   const dir = memoryHomeDir();
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, "state.sqlite");
+  if (db && activePath === path) return db;
+  db?.close();
+  db = null;
+  activePath = path;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   db = new Database(path, { create: true });
   db.run("PRAGMA journal_mode=WAL");
   db.run("PRAGMA synchronous=FULL");
@@ -62,4 +66,5 @@ export function listActivity(limit = 100): Array<ActivityRecord & { id: string; 
 export function resetActivityDbForTests(): void {
   db?.close();
   db = null;
+  activePath = null;
 }
