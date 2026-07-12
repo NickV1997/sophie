@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ToolStreamParser } from "../src/llm/qwen.ts";
 import { protocolForModel } from "../src/llm/tool-protocol.ts";
-import { NativeToolCallAccumulator } from "../src/llm/client.ts";
+import { NativeToolCallAccumulator } from "../src/llm/native-tool-calls.ts";
 
 function parse(raw: string) {
   let visible = "";
