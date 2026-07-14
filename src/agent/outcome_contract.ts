@@ -37,7 +37,7 @@ export const ENFORCEABLE_OUTCOMES: Record<string, string> = {
   "delegate:add": "create the requested delegation with delegate(action:'add')",
   activity: "read the activity log before reporting what actually happened",
   web_search: "perform the requested research with web_search",
-  ask_user: "ask the user with ask_user before proceeding; since it ends the turn, include any requested evidence, comparison, or recommendation in its preamble",
+  ask_user: "ask the user with ask_user before proceeding",
   write_file: "create the explicitly requested file with write_file",
 };
 

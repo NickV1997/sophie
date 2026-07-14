@@ -416,7 +416,17 @@ export class Agent {
     const routingContext = this.restoredSession || priorToolNames.length
       ? { restoredSession: this.restoredSession, priorToolNames }
       : undefined;
+    const routingStarted = Date.now();
     let intent = await classifyTurnIntent(input, { objective: getObjective(), tasks: getTasks() }, signal, routingContext);
+    const routingMs = Date.now() - routingStarted;
+    // Routing must stay a small fraction of the turn. If it ever creeps up
+    // (model regression, added passes), surface it instead of silently paying.
+    if (routingMs > 3000) {
+      addJournalEntry({
+        kind: "decision",
+        summary: `Intent routing took ${(routingMs / 1000).toFixed(1)}s — over the 3s budget; investigate before adding any routing complexity.`,
+      });
+    }
     cb.onIntent?.(intent, routingContext);
     this.restoredSession = false;
     // Tool activation is deliberately per-turn. Accumulating every group used
@@ -1985,7 +1995,7 @@ function looksLikeCodingRequest(input: string): boolean {
 }
 
 function looksLikePersonalRecordRequest(input: string): boolean {
-  const personal = /\b(client|stakeholder|contact|person|people|task|reminder|appointment|application[- ]tracking|active opportunit|family|care|shop|invoice|follow-up)\b/i.test(input);
+  const personal = /\b(client|stakeholder|contact|person|people|task|reminder|appointment|family|invoice|follow-up)\b/i.test(input);
   const technical = /\b(code|codebase|repo|app|frontend|backend|component|api endpoint|server|script|python|react|next\.?js|typescript|javascript|cli|source file)\b/i.test(input);
   return personal && !technical;
 }
