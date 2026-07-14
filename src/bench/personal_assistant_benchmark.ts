@@ -146,10 +146,10 @@ async function runTurn(scenario: PersonalScenario, turn: PersonalTurn, index: nu
   };
 }
 
-export async function runPersonalAssistantBenchmark(): Promise<void> {
+export async function runPersonalAssistantBenchmark(corpus: PersonalScenario[] = PERSONAL_ASSISTANT_SCENARIOS): Promise<void> {
   const wanted = arg("--scenario"); const maxTurns = Number(arg("--max-turns") ?? Infinity); const allowFailures = process.argv.includes("--allow-failures");
   const out = process.env.SOPHIE_PERSONAL_BENCH_OUT ?? join(REPO_ROOT, "bench-results", `${new Date().toISOString().replace(/[:.]/g, "-")}-personal-assistant`); mkdirSync(out, { recursive: true });
-  const selected = PERSONAL_ASSISTANT_SCENARIOS.filter((s) => !wanted || wanted.split(",").includes(s.id)); const records: PersonalTurnRecord[] = [];
+  const selected = corpus.filter((s) => !wanted || wanted.split(",").includes(s.id)); const records: PersonalTurnRecord[] = [];
   console.log(`Personal Assistant 9/10 benchmark: ${selected.length} conversation(s), ${selected.reduce((n, s) => n + Math.min(maxTurns, s.turns.length), 0)} turn(s)`); console.log(`Model: ${config.model}\nOutput: ${out}\n`);
   for (const scenario of selected) {
     const workspace = join(out, "workspace"); mkdirSync(workspace, { recursive: true }); writeFileSync(join(workspace, "README.md"), "# Synthetic personal-assistant benchmark workspace\nNo live user data belongs here.\n"); process.chdir(workspace);

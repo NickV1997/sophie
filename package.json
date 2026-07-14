@@ -23,6 +23,8 @@
     "bench:real-world:smoke": "bun run src/bench/real_world_entry.ts --scenario maya-founder-week --max-turns 2 --allow-failures",
     "bench:personal-assistant": "bun run src/bench/personal_assistant_entry.ts",
     "bench:personal-assistant:smoke": "bun run src/bench/personal_assistant_entry.ts --scenario older-simple-help --max-turns 2 --allow-failures",
+    "bench:generalization": "bun run src/bench/generalization_entry.ts",
+    "bench:generalization:smoke": "bun run src/bench/generalization_entry.ts --scenario fault-recovery --allow-failures",
     "audit:public": "bun run scripts/audit-public.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
