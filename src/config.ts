@@ -90,6 +90,10 @@ export interface Config {
   embeddings: boolean;
   embeddingsUrl: string;
   embeddingsModel: string;
+  /** Background memory upkeep: batched extraction of buffered observations plus
+   *  the ~daily dream pass (dedupe, prune, summarize, contradiction cleanup).
+   *  Deterministic phases always apply; model phases degrade gracefully. */
+  dream: boolean;
   /** Gmail app-password settings for local IMAP/SMTP email access. */
   emailAddress: string;
   emailAppPassword: string;
@@ -141,6 +145,7 @@ function computeConfig(): Config {
     embeddings: bool("SOPHIE_EMBEDDINGS", true),
     embeddingsUrl: str("SOPHIE_EMBEDDINGS_URL", str("SOPHIE_BASE_URL", "http://localhost:11434/v1")).replace(/\/+$/, ""),
     embeddingsModel: str("SOPHIE_EMBEDDINGS_MODEL", str("SOPHIE_MODEL", "qwen3")),
+    dream: bool("SOPHIE_DREAM", true),
     emailAddress: str("SOPHIE_EMAIL_ADDRESS", ""),
     emailAppPassword: getSecret("SOPHIE_EMAIL_APP_PASSWORD"),
     emailImapHost: str("SOPHIE_EMAIL_IMAP_HOST", "imap.gmail.com"),

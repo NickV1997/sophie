@@ -1,8 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { classifyTurnIntent } from "../src/agent/intent.ts";
+import { setIntentModel } from "../src/agent/intent_model.ts";
 import type { Objective, Task } from "../src/agent/tasks.ts";
 import replays from "./fixtures/runtime-failure-replays.json";
 import { deterministicToolCallForInput } from "../src/agent/deterministic_tools.ts";
+
+beforeEach(() => setIntentModel(null));
 
 const chatAppObjective: Objective = {
   content: "Create Desktop/test folder, scaffold a Next.js project with latest shadcn/ui, install AI chat components, and replace page.tsx with a ChatGPT-like chatbot UI.",
@@ -20,15 +23,15 @@ describe("bad session replay router checks", () => {
     "is there a folder called test on yhe desktop",
     "please delete the test folder in the desktop",
     "what? thats not what i asked for",
-  ])("does not allow stale shadcn app task to hijack: %s", (input) => {
-    const intent = classifyTurnIntent(input, { objective: chatAppObjective, tasks: chatAppTasks });
+  ])("does not allow stale shadcn app task to hijack: %s", async (input) => {
+    const intent = await classifyTurnIntent(input, { objective: chatAppObjective, tasks: chatAppTasks });
     expect(intent.kind).not.toBe("continue_job");
     expect(intent.shouldTrackTasks).toBe(false);
     expect(intent.resetReason).toBeTruthy();
   });
 
-  test.each(replays)("replays recorded runtime failure $id from $source", (replay) => {
-    const intent = classifyTurnIntent(replay.prompt, { objective: null, tasks: [] });
+  test.each(replays)("replays recorded runtime failure $id from $source", async (replay) => {
+    const intent = await classifyTurnIntent(replay.prompt, { objective: null, tasks: [] });
     const deterministic = deterministicToolCallForInput(replay.prompt, intent);
     expect([...(intent.expectedTools ?? []), deterministic?.name]).toContain(replay.expectedTool);
     if (replay.bannedTool) expect(intent.expectedTools ?? []).not.toContain(replay.bannedTool);

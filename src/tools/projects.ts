@@ -23,6 +23,21 @@ export const projectsTool: Tool = {
         enum: ["list", "view", "add", "update", "milestone", "complete_milestone", "close"],
         description: "list: show projects; view: full detail; add: create; update: edit fields; milestone: add milestone; complete_milestone: mark done; close: set completed/archived",
       },
+      projects: {
+        type: "array",
+        description: "For action:add, validate and create several projects in one call.",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            description: { type: "string" },
+            goals: { type: "array", items: { type: "string" } },
+            stakeholders: { type: "array", items: { type: "string" } },
+            notes: { type: "string" },
+          },
+          required: ["name"],
+        },
+      },
       name: { type: "string", description: "Project name" },
       status: { type: "string", description: "Filter for list (active|paused|completed|archived|all); or new status for update/close" },
       description: { type: "string", description: "Project description" },
@@ -67,16 +82,19 @@ export const projectsTool: Tool = {
     }
 
     if (action === "add") {
-      const name = String(args.name ?? "").trim();
-      if (!name) return { content: "name is required.", isError: true };
-      const proj = upsertProject({
-        name,
-        description: args.description != null ? String(args.description) : undefined,
-        goals: Array.isArray(args.goals) ? args.goals.map(String) : undefined,
-        stakeholders: Array.isArray(args.stakeholders) ? args.stakeholders.map(String) : undefined,
-        notes: args.notes != null ? String(args.notes) : undefined,
-      });
-      return { content: `Project created.\n\n${renderProject(proj)}`, display: proj.name };
+      const batch = Array.isArray(args.projects) && args.projects.length
+        ? args.projects.slice(0, 20).map((item) => item as Record<string, unknown>)
+        : [args as Record<string, unknown>];
+      const prepared = batch.map((item) => ({
+        name: String(item.name ?? "").trim(),
+        description: item.description != null ? String(item.description) : undefined,
+        goals: Array.isArray(item.goals) ? item.goals.map(String) : undefined,
+        stakeholders: Array.isArray(item.stakeholders) ? item.stakeholders.map(String) : undefined,
+        notes: item.notes != null ? String(item.notes) : undefined,
+      }));
+      if (prepared.some((item) => !item.name)) return { content: "Every project needs a name; no projects were created.", isError: true };
+      const created = prepared.map((item) => upsertProject(item));
+      return { content: `${created.length} project${created.length === 1 ? "" : "s"} created.\n\n${created.map(renderProject).join("\n\n---\n\n")}`, display: created.map((item) => item.name).join(", ") };
     }
 
     if (action === "update") {

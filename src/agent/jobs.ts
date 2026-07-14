@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { sanitizedCommandEnvironment, sandboxedShellCommand } from "../system/command-sandbox.ts";
 
 /**
  * Durable background jobs for long-running work. Jobs are recorded on disk with
@@ -104,7 +105,7 @@ function refresh(job: Job): Job {
   return job;
 }
 
-export function startJob(command: string, cwd: string): Job {
+export function startJob(command: string, cwd: string, opts: { sandboxed?: boolean } = {}): Job {
   loadAll();
   ensureDir();
   const id = `job-${Date.now().toString(36)}-${seq++}`;
@@ -114,8 +115,9 @@ export function startJob(command: string, cwd: string): Job {
     `(${command}) > ${shQuote(logPath)} 2>&1; ` +
     `code=$?; printf "%s" "$code" > ${shQuote(exitPath)}; exit "$code"`;
 
-  const proc = Bun.spawn(["bash", "-lc", wrapped], {
+  const proc = Bun.spawn(opts.sandboxed === false ? ["bash", "-lc", wrapped] : sandboxedShellCommand(wrapped, cwd, [JOBS_DIR]), {
     cwd,
+    env: sanitizedCommandEnvironment(),
     stdout: "ignore",
     stderr: "ignore",
     stdin: "ignore",

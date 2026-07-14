@@ -21,6 +21,8 @@
     "bench:performance-gate": "bun run src/bench/performance_gate.ts",
     "bench:real-world": "bun run src/bench/real_world_entry.ts",
     "bench:real-world:smoke": "bun run src/bench/real_world_entry.ts --scenario maya-founder-week --max-turns 2 --allow-failures",
+    "bench:personal-assistant": "bun run src/bench/personal_assistant_entry.ts",
+    "bench:personal-assistant:smoke": "bun run src/bench/personal_assistant_entry.ts --scenario older-simple-help --max-turns 2 --allow-failures",
     "audit:public": "bun run scripts/audit-public.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",

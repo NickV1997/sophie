@@ -74,6 +74,13 @@ describe("progressive tool disclosure", () => {
     expect(activeToolGroups().size).toBe(0);
   });
 
+  test("personal projects activate assistant records, not coding tools", () => {
+    autoActivateForInput("Create projects for Northstar and Maple, add stakeholders and tasks");
+    expect(activeToolGroups().has("assistant")).toBe(true);
+    expect(activeToolGroups().has("coding")).toBe(false);
+    expect(activeToolGroups().has("shell")).toBe(false);
+  });
+
   test("load_tools activates and returns full schemas", async () => {
     const result = await loadTools.execute({ group: "jobs" }, { cwd: process.cwd() });
     expect(result.isError).toBeUndefined();
@@ -89,7 +96,7 @@ describe("progressive tool disclosure", () => {
   });
 
   test("common model group aliases activate assistant tools", async () => {
-    for (const alias of ["email", "messaging", "calendar"]) {
+    for (const alias of ["email", "inbox", "messaging", "apple-messages", "calendar"]) {
       resetToolGroups();
       const result = await loadTools.execute({ group: alias }, { cwd: process.cwd() });
       expect(result.isError).toBeUndefined();

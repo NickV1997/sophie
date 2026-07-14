@@ -22,6 +22,25 @@ export const peopleTool: Tool = {
         enum: ["lookup", "upsert", "log_contact", "add_thread", "close_thread", "list", "delete"],
         description: "lookup: search by name; upsert: create/update; log_contact: record an interaction; add_thread: add open item; close_thread: resolve an item; list: all people; delete: remove a record",
       },
+      people: {
+        type: "array",
+        description: "For action:upsert, validate and save several people in one call.",
+        items: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            role: { type: "string" },
+            relationship: { type: "string" },
+            aliases: { type: "array", items: { type: "string" } },
+            phones: { type: "array", items: { type: "string" } },
+            emails: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            notes: { type: "string" },
+            open_threads: { type: "array", items: { type: "string" } },
+          },
+          required: ["name"],
+        },
+      },
       name: { type: "string", description: "Person name (required for all actions except list)" },
       role: { type: "string", description: "Role: investor, cofounder, client, friend, etc." },
       relationship: { type: "string", description: "One-sentence summary of the relationship" },
@@ -62,20 +81,23 @@ export const peopleTool: Tool = {
     }
 
     if (action === "upsert") {
-      const name = String(args.name ?? "").trim();
-      if (!name) return { content: "name is required for upsert.", isError: true };
-      const rec = upsertPerson({
-        name,
-        role: args.role != null ? String(args.role) : undefined,
-        relationship: args.relationship != null ? String(args.relationship) : undefined,
-        aliases: Array.isArray(args.aliases) ? args.aliases.map(String) : undefined,
-        phones: Array.isArray(args.phones) ? args.phones.map(String) : undefined,
-        emails: Array.isArray(args.emails) ? args.emails.map(String) : undefined,
-        tags: Array.isArray(args.tags) ? args.tags.map(String) : undefined,
-        notes: args.notes != null ? String(args.notes) : undefined,
-        openThreads: Array.isArray(args.open_threads) ? args.open_threads.map(String) : undefined,
-      });
-      return { content: `Saved.\n\n${renderPerson(rec)}`, display: rec.name };
+      const batch = Array.isArray(args.people) && args.people.length
+        ? args.people.slice(0, 20).map((item) => item as Record<string, unknown>)
+        : [args as Record<string, unknown>];
+      const prepared = batch.map((item) => ({
+        name: String(item.name ?? "").trim(),
+        role: item.role != null ? String(item.role) : undefined,
+        relationship: item.relationship != null ? String(item.relationship) : undefined,
+        aliases: Array.isArray(item.aliases) ? item.aliases.map(String) : undefined,
+        phones: Array.isArray(item.phones) ? item.phones.map(String) : undefined,
+        emails: Array.isArray(item.emails) ? item.emails.map(String) : undefined,
+        tags: Array.isArray(item.tags) ? item.tags.map(String) : undefined,
+        notes: item.notes != null ? String(item.notes) : undefined,
+        openThreads: Array.isArray(item.open_threads) ? item.open_threads.map(String) : undefined,
+      }));
+      if (prepared.some((item) => !item.name)) return { content: "Every person needs a name; no people were saved.", isError: true };
+      const saved = prepared.map((item) => upsertPerson(item));
+      return { content: `Saved ${saved.length} people record${saved.length === 1 ? "" : "s"}.\n\n${saved.map(renderPerson).join("\n\n---\n\n")}`, display: saved.map((item) => item.name).join(", ") };
     }
 
     if (action === "log_contact") {

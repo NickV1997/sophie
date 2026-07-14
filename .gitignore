@@ -45,3 +45,4 @@ scratch/
 
 # Benchmark output
 bench-results/
+__pycache__/

@@ -41,6 +41,8 @@ export interface ToolContext {
   cwd: string;
   /** Abort signal so long tools (bash) can be cancelled. */
   signal?: AbortSignal;
+  /** True only when this exact call passed an interactive, argument-bound approval. */
+  approved?: boolean;
 }
 
 export type RiskLevel = "safe" | "caution" | "dangerous";

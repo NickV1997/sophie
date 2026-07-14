@@ -944,7 +944,13 @@ export const apple: Tool = {
     return `${action.replace("reminders_", "reminders: ")}${a.name ? ` "${a.name}"` : ""}`;
   },
   risk: (a) => {
-    if (a.action === "messages_send" || a.action === "notes_delete") return "caution";
+    if ([
+      "messages_send",
+      "notes_create", "notes_append", "notes_replace", "notes_rename", "notes_delete", "notes_move",
+      "folders_create",
+      "reminders_create", "reminders_update", "reminders_complete",
+      "alarms_create", "alarms_cancel",
+    ].includes(String(a.action))) return "caution";
     return "safe";
   },
   async execute(args, ctx) {

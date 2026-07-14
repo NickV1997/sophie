@@ -347,6 +347,30 @@ function stripTrailingCommas(s: string): string {
   return s.replace(/,(\s*[}\]])/g, "$1");
 }
 
+/** Close only structurally unbalanced JSON containers. Values, keys, and
+ * quotes are untouched, so this cannot change the intended tool or arguments. */
+function closeUnbalancedContainers(s: string): string | null {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const char of s) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === "{" || char === "[") stack.push(char);
+    else if (char === "}" || char === "]") {
+      const expected = char === "}" ? "{" : "[";
+      if (stack.pop() !== expected) return null;
+    }
+  }
+  if (inString || !stack.length) return null;
+  return s + stack.reverse().map((open) => open === "{" ? "}" : "]").join("");
+}
+
 /**
  * Produce a list of progressively-repaired candidate JSON strings for one
  * tool-call body, most-faithful first. safeParseCall tries each until one
@@ -383,6 +407,10 @@ function repairCallBodies(body: string): string[] {
   // Trailing commas before } or ].
   add(stripTrailingCommas(body));
   add(stripTrailingCommas(keyRepaired));
+  for (const base of [body, keyRepaired, stripTrailingCommas(body), stripTrailingCommas(keyRepaired)]) {
+    const balanced = closeUnbalancedContainers(base);
+    if (balanced) add(balanced);
+  }
 
   // Last resort: Python-style single-quoted JSON. Naive but only used as a
   // fallback — if apostrophes inside values break it, JSON.parse just rejects
@@ -391,6 +419,8 @@ function repairCallBodies(body: string): string[] {
     const doubleQuoted = base.replace(/'/g, '"');
     add(doubleQuoted);
     add(stripTrailingCommas(doubleQuoted));
+    const balanced = closeUnbalancedContainers(stripTrailingCommas(doubleQuoted));
+    if (balanced) add(balanced);
   }
 
   return candidates;

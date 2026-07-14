@@ -2,11 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { REPO_ROOT } from "../config.ts";
+import { trustedProjectMcpConfigPaths } from "./trust.ts";
 
 /**
  * MCP server config. Claude Code-compatible shape so users can paste an
  * existing `.mcp.json`. Merged from (later wins):
- *   1. <repo>/mcp.json       — ships shadcn enabled
+ *   1. <repo>/mcp.json       — built-in defaults (empty by default)
  *   2. ~/.sophie/mcp.json    — user global
  *   3. <cwd>/.sophie/mcp.json or <cwd>/.mcp.json — per project
  * A `disabled: true` entry removes that server from the merged result.
@@ -16,6 +17,8 @@ export interface McpServerConfig {
   args?: string[];
   env?: Record<string, string>;
   disabled?: boolean;
+  /** Default is no network and writes limited to cwd/temp on supported macOS. */
+  permissions?: { network?: boolean; filesystem?: "cwd" | "all" };
 }
 
 export interface McpConfigFile {
@@ -38,8 +41,7 @@ function configPaths(cwd: string): string[] {
   return [
     join(REPO_ROOT, "mcp.json"),
     join(homedir(), ".sophie", "mcp.json"),
-    join(cwd, ".sophie", "mcp.json"),
-    join(cwd, ".mcp.json"),
+    ...trustedProjectMcpConfigPaths(cwd),
   ];
 }
 

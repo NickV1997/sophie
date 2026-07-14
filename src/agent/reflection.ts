@@ -16,6 +16,10 @@ import { addMemory } from "../memory/facts.ts";
 import { addJournalEntry, getCurrentJob, getJournal, type JournalEntry } from "./tasks.ts";
 
 const reflectedJobs = new Set<string>();
+const UNTRUSTED_TOOLS = new Set(["web_search", "web_fetch", "email", "apple", "read_document", "browser_check", "browser_act", "http_request"]);
+function trustedForLearning(entry: JournalEntry): boolean {
+  return !entry.tool || (!UNTRUSTED_TOOLS.has(entry.tool) && !entry.tool.startsWith("mcp__"));
+}
 
 function clip(s: string | undefined, n: number): string {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
@@ -59,10 +63,10 @@ export function maybeReflectOnJob(cwd: string): void {
   const job = getCurrentJob();
   if (!job || job.status !== "completed" || reflectedJobs.has(job.id)) return;
   const entries = getJournal().filter((j) => j.jobId === job.id);
-  const errors = entries.filter((j) => j.isError);
+  const errors = entries.filter((j) => j.isError && trustedForLearning(j));
   if (errors.length < 2) return; // smooth runs teach nothing new
   reflectedJobs.add(job.id);
-  const successes = entries.filter((j) => !j.isError && (j.kind === "verification" || j.kind === "tool_result"));
+  const successes = entries.filter((j) => trustedForLearning(j) && !j.isError && (j.kind === "verification" || j.kind === "tool_result"));
 
   void (async () => {
     try {

@@ -10,7 +10,9 @@ Usage:
   sophie webapp       Start the Sophie web app (phone-friendly, Tailscale-ready)
   sophie webapp stop  Stop the Sophie web app
   sophie doctor       Check install, .env, and model server reachability
+  sophie dream        Consolidate long-term memory now (dedupe, prune, summarize)
   sophie daemon install|start|stop|status
+  sophie mcp trust|status|revoke
   sophie secrets migrate   Copy configured secrets into macOS Keychain
   sophie --help       Show this help
   sophie --version    Show the installed version
@@ -107,6 +109,29 @@ if (args[0] === "doctor") {
   await doctor();
 }
 
+if (args[0] === "dream") {
+  const { memoryReportPath, runDreamPass } = await import("../src/memory/dream.ts");
+  const { ping } = await import("../src/llm/client.ts");
+  const status = await ping();
+  if (!status.ok) process.stdout.write(`model server unreachable (${status.detail}) — running deterministic phases only\n`);
+  const report = await runDreamPass(process.cwd(), { llm: status.ok });
+  process.stdout.write(
+    [
+      "Dream pass complete.",
+      `  extracted:  ${report.extracted} new memories from buffered observations`,
+      `  swept:      ${report.sweep.duplicates} duplicates merged, ${report.sweep.staleJunk + report.sweep.vague + report.sweep.expired} stale/vague/expired removed`,
+      report.llmReviewed
+        ? `  reviewed:   ${report.review.reviewed} → ${report.review.dropped} dropped, ${report.review.rewritten} rewritten, ${report.review.merged} merged, ${report.review.superseded} superseded`
+        : "  reviewed:   skipped (model unavailable)",
+      `  legacy:     ${report.legacyFactsMerged} keyword facts folded`,
+      `  remaining:  ${report.remaining.global} global / ${report.remaining.project} project memories`,
+      `  report:     ${memoryReportPath()}`,
+      "",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
+
 if (args[0] === "daemon") {
   const action = args[1] ?? "status";
   const { runDaemon, readDaemonStatus } = await import("../src/daemon/service.ts");
@@ -123,6 +148,32 @@ if (args[0] === "secrets" && args[1] === "migrate") {
   const keys = migrateEnvSecretsToKeychain(false);
   process.stdout.write(keys.length ? `Stored in macOS Keychain: ${keys.join(", ")}\nYou may now blank those values in .env.\n` : "No configured secrets were migrated.\n");
   process.exit(keys.length ? 0 : 1);
+}
+
+if (args[0] === "mcp") {
+  const { projectMcpConfigStatuses, revokeProjectMcpTrust, trustProjectMcpConfigs } = await import("../src/mcp/trust.ts");
+  const action = args[1] ?? "status";
+  if (action === "trust") {
+    const trusted = trustProjectMcpConfigs(process.cwd());
+    process.stdout.write(trusted.length
+      ? `Trusted ${trusted.length} project MCP config(s) at their current content hash:\n${trusted.map((item) => `- ${item.path}`).join("\n")}\nRestart Sophie to connect them.\n`
+      : "No .mcp.json or .sophie/mcp.json exists in this project.\n");
+    process.exit(trusted.length ? 0 : 1);
+  }
+  if (action === "revoke") {
+    const removed = revokeProjectMcpTrust(process.cwd());
+    process.stdout.write(`Revoked ${removed} project MCP trust record(s).\n`);
+    process.exit(0);
+  }
+  if (action !== "status") {
+    process.stderr.write("Usage: sophie mcp trust|status|revoke\n");
+    process.exit(2);
+  }
+  const statuses = projectMcpConfigStatuses(process.cwd());
+  process.stdout.write(statuses.length
+    ? `${statuses.map((item) => `${item.trusted ? "trusted" : "UNTRUSTED"} ${item.path} sha256:${item.contentHash.slice(0, 16)}`).join("\n")}\n`
+    : "No project MCP config found.\n");
+  process.exit(0);
 }
 
 if (args[0] === "webapp") {

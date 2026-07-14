@@ -185,7 +185,7 @@ export const scaffoldProject: Tool = {
     required: ["template", "path"],
   },
   summarize: (a) => `scaffold ${a.template} at ${a.path}`,
-  risk: () => "safe",
+  risk: (a) => a.force ? "caution" : "safe",
   async execute(args, ctx) {
     const template = TEMPLATES[String(args.template ?? "")];
     if (!template) {

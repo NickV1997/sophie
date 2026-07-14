@@ -12,6 +12,7 @@ import { resolvePath } from "../system/paths.ts";
 import { protectedWriteBlockReason } from "../system/protected-paths.ts";
 import { recordFileChange } from "../system/undo.ts";
 import type { Tool } from "./types.ts";
+import { isSensitivePathLike } from "../system/sensitive-data.ts";
 
 function abs(cwd: string, p: string): string {
   return resolvePath(cwd, p);
@@ -75,7 +76,7 @@ export const readFile: Tool = {
     required: ["path"],
   },
   summarize: (a) => `read ${a.path}`,
-  risk: () => "safe",
+  risk: (a) => isSensitivePathLike(a.path) ? "caution" : "safe",
   async execute(args, ctx) {
     const path = abs(ctx.cwd, args.path);
     if (!existsSync(path)) return { content: `File not found: ${path}`, display: "not found" };
@@ -374,7 +375,7 @@ export const grep: Tool = {
     required: ["pattern"],
   },
   summarize: (a) => `grep ${a.pattern}`,
-  risk: () => "safe",
+  risk: (a) => isSensitivePathLike(a.path) ? "caution" : "safe",
   async execute(args, ctx) {
     const base = abs(ctx.cwd, args.path ?? ".");
     if (!existsSync(base)) {

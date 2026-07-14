@@ -210,7 +210,9 @@ export function toolCatalogBlock(): string {
 export function autoActivateForInput(input: string): string[] {
   const text = input.toLowerCase();
   const wanted: string[] = [];
-  if (/\b(remind|reminder|schedule|alarm|cron|notify|notification|telegram|phone|calendar|meeting|appointment|event|book|reschedule|availab|free (time|slot)|email|gmail|inbox|unread|mailbox|draft|send.*mail|mail\b|weather|rain|forecast|clipboard|paste|speak|say (it|this)|aloud|open (the|my|a|this)\b|open https?:\/\/|http request|api call|get request|httpbin|calculate|calculator|compute|standard deviation|average|mean|how much is|what is \d|percent|percentage|square root|fahrenheit|celsius|seconds? in|multiply|divide|imessage|text (him|her|them|me|my)|messages?\b|notes?\b|watch (the|my|a|this|for)|downloads folder|pdf|docx?|document|invoice|contract|contact|who is|find.*number|phone number|send.*message|message to|text to|person|people|relationship|project|milestone|stakeholder|delegate|keep.*informed|update.*\w|brief|change.*voice|switch.*voice|voice.*preview|preview.*voice|list.*voice|what.*voice|sound like|speak.*english)\b/.test(text)) {
+  const personalRecords = /\b(client|stakeholder|contact|person|people|task|reminder|appointment)\b/.test(text) &&
+    !/\b(code|codebase|repo|app|frontend|backend|component|api endpoint|server|script|python|react|next\.?js|typescript|javascript|cli|source file)\b/.test(text);
+  if (/\b(remind|reminder|schedule|alarm|cron|notify|notification|telegram|phone|calendar|meeting|appointment|event|book|reschedule|availab|free (time|slot)|email|gmail|inbox|unread|mailbox|draft|send.*mail|mail\b|weather|rain|forecast|clipboard|paste|speak|say (it|this)|aloud|open (the|my|a|this)\b|open https?:\/\/|http request|api call|get request|calculate|calculator|compute|standard deviation|average|mean|how much is|what is \d|percent|percentage|square root|fahrenheit|celsius|seconds? in|multiply|divide|imessage|text (him|her|them|me|my)|messages?\b|notes?\b|watch (the|my|a|this|for)|downloads folder|pdf|docx?|document|invoice|contract|contacts?|who is|find.*number|phone number|send.*message|message to|text to|person|people|relationship|projects?|milestones?|stakeholders?|tasks?|delegate|keep.*informed|update.*\w|brief|review\b|activity log|change.*voice|switch.*voice|voice.*preview|preview.*voice|list.*voice|what.*voice|sound like|speak.*english)\b/.test(text)) {
     wanted.push("assistant");
   }
   if (/\b(browser|website|web ?page|log ?in|sign ?in|click|fill (in|out)|form|checkout|shopping|amazon|tickets?)\b/.test(text)) {
@@ -229,7 +231,7 @@ export function autoActivateForInput(input: string): string[] {
   if (/\b(verify|scaffold|dev server|long[- ]running|background job|typecheck|browser)\b/.test(text)) {
     wanted.push("coding", "jobs");
   }
-  if (
+  if (!personalRecords &&
     /\b(code|codebase|repo|app|project|frontend|backend|component|page|api|server|typescript|javascript|python|react|next\.?js)\b/.test(text) &&
     /\b(fix|change|edit|update|add|remove|delete|create|build|implement|rewrite|refactor|debug|write|generate)\b/.test(text)
   ) {
@@ -261,7 +263,18 @@ export const loadTools: Tool = {
   risk: () => "safe",
   async execute(args) {
     const requested = String(args.group ?? "").trim();
-    const name = ({ email: "assistant", messaging: "assistant", messages: "assistant", calendar: "assistant", scheduling: "assistant", tasks: "assistant" } as Record<string, string>)[requested] ?? requested;
+    const name = ({
+      email: "assistant",
+      inbox: "assistant",
+      messaging: "assistant",
+      messages: "assistant",
+      "apple-messages": "assistant",
+      imessage: "assistant",
+      calendar: "assistant",
+      scheduling: "assistant",
+      tasks: "assistant",
+      contacts: "assistant",
+    } as Record<string, string>)[requested] ?? requested;
     const group = groupByName.get(name);
     if (!group) {
       const available = TOOL_GROUPS.map((g) => g.name).join(", ");

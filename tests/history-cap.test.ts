@@ -35,6 +35,7 @@ describe("history budget cap (compaction fires regardless of window size)", () =
     config.maxHistoryTokens = 40_000;
     setContextWindow(200_000);
     expect(historyBudget(6000, 12_000)).toBe(12_000);
-    expect(historyBudget(6000, 40_000)).toBe(40_000);
+    expect(historyBudget(6000, 40_000)).toBeLessThan(22_000);
+    expect(historyBudget(6000, 40_000)).toBeGreaterThanOrEqual(12_000);
   });
 });

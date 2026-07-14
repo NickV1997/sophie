@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyTurnIntent } from "../src/agent/intent.ts";
+import { heuristicTurnIntent } from "../src/agent/intent.ts";
 import { QUESTIONS } from "../src/bench/questions.ts";
 import { RUNTIME_GAUNTLET_CHATS } from "../src/bench/runtime_gauntlet.ts";
 import { USEFULNESS_SCENARIOS } from "../src/bench/usefulness_suite.ts";
@@ -7,10 +7,7 @@ import { getTool, toolSpecs } from "../src/tools/registry.ts";
 
 describe("one-page app runtime benchmark prerequisites", () => {
   test("one-page Next app request routes as a fresh coding job", () => {
-    const intent = classifyTurnIntent("build a one page Next.js UI app with shadcn and verify it runs", {
-      objective: null,
-      tasks: [],
-    });
+    const intent = heuristicTurnIntent("build a one page Next.js UI app with shadcn and verify it runs");
     expect(intent.kind).toBe("new_job");
     expect(intent.shouldTrackTasks).toBe(true);
     expect(intent.requiresAction).toBe(true);

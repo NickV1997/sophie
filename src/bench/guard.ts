@@ -18,6 +18,7 @@
 import { config } from "../config.ts";
 import { TOOLS } from "../tools/registry.ts";
 import type { Tool, ToolContext, ToolResult } from "../tools/types.ts";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /** The port the local model server listens on. A benchmark case that tells
  *  Sophie to "serve" a site must NOT bind this port, or it shadows the LLM
@@ -58,6 +59,40 @@ interface GuardHandle {
   uninstall(): void;
 }
 
+export interface GuardOptions {
+  /** When set, filesystem-capable benchmark tools cannot read or write outside
+   * this tree. This is stricter than Sophie's normal policy because a benchmark
+   * must never inspect or mutate the operator's live files. */
+  workspaceRoot?: string;
+  /** Disable every real network-capable tool; fake-world adapters can replace
+   * selected tools after the guard is installed. */
+  blockNetwork?: boolean;
+}
+
+const PATH_TOOLS = new Set([
+  "read_file", "write_file", "edit_file", "replace_lines", "read_document",
+  "list_dir", "glob", "grep", "project_map", "find_images", "describe_images",
+  "watch_path", "scaffold_project", "scaffold_python_project",
+  "scaffold_next_shadcn_project", "verify_project", "verify_next_app",
+  "verify_python_project", "verify_static_site", "project_checks", "git_checkpoint",
+]);
+
+function outsideWorkspace(value: string, root: string): boolean {
+  if (!value.trim()) return false;
+  if (value.startsWith("~")) return true;
+  const resolved = resolve(root, value);
+  const rel = relative(root, resolved);
+  return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+}
+
+function pathEscape(tool: string, args: Record<string, any>, root?: string): string | null {
+  if (!root || !PATH_TOOLS.has(tool)) return null;
+  const candidates = [args.path, args.dir, args.directory, args.root, args.cwd, args.project_dir, args.output, args.out]
+    .filter((item) => typeof item === "string") as string[];
+  if (tool === "apply_edits" && typeof args.patch === "string" && /(?:^|\n)(?:\+\+\+|---)\s+(?:\/|~|\.\.\/)/m.test(args.patch)) return "patch names a path outside the benchmark workspace";
+  return candidates.some((item) => outsideWorkspace(item, root)) ? "path resolves outside the benchmark workspace" : null;
+}
+
 /** Commands that must never run for real, even inside the sandbox. */
 const DANGEROUS_BASH: { re: RegExp; why: string }[] = [
   { re: /\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b.*(\/(\s|$)|~|\$HOME|\.\.(\/|\s|$)|\/(Users|System|Library|etc|bin|var|Applications))/i, why: "recursive delete outside the sandbox" },
@@ -94,9 +129,11 @@ function bashDanger(command: string): string | null {
 
 /** Decide how to handle a specific call. Returns a simulated result when the
  *  action should not actually happen. */
-function decide(tool: string, args: Record<string, any>): { action: GuardAction; reason: string; result?: ToolResult } {
+function decide(tool: string, args: Record<string, any>, options: GuardOptions): { action: GuardAction; reason: string; result?: ToolResult } {
   const a = (k: string) => String(args?.[k] ?? "").trim();
   const action = a("action");
+  const escape = pathEscape(tool, args, options.workspaceRoot);
+  if (escape) return { action: "block", reason: escape, result: { content: `Refused: benchmark isolation blocked this call (${escape}).`, isError: true, display: "blocked (sandbox escape)" } };
 
   switch (tool) {
     case "apple": {
@@ -138,6 +175,7 @@ function decide(tool: string, args: Record<string, any>): { action: GuardAction;
       }
       return { action: "allow", reason: "delegate list — permitted" };
     case "http_request": {
+      if (options.blockNetwork) return { action: "simulate", reason: "network disabled for isolated benchmark", result: { content: "Synthetic benchmark HTTP response; no network request was made.", display: "network simulated" } };
       const method = a("method").toUpperCase() || "GET";
       if (["GET", "HEAD", "OPTIONS"].includes(method)) return { action: "allow", reason: `read-only ${method}` };
       return { action: "simulate", reason: `${method} request suppressed`, result: { content: `(benchmark) ${method} ${a("url")} suppressed — no external mutation performed.`, display: `${method} blocked` } };
@@ -153,16 +191,25 @@ function decide(tool: string, args: Record<string, any>): { action: GuardAction;
       return { action: "simulate", reason: "screen capture suppressed (privacy)", result: { content: `(benchmark) screen capture skipped; no screenshot taken.`, display: "capture suppressed" } };
     case "browser_act":
       return { action: "simulate", reason: "browser interaction suppressed", result: { content: `(benchmark) browser ${action || "action"} suppressed.`, display: "browser act suppressed" } };
+    case "browser_check":
+      return { action: "simulate", reason: "browser launch suppressed", result: { content: "(benchmark) browser check simulated; no browser was launched.", display: "browser check suppressed" } };
     case "watch_path":
       return { action: "simulate", reason: "filesystem watcher suppressed", result: { content: `(benchmark) watch registered (no persistent watcher started).`, display: "watch suppressed" } };
     case "clipboard": {
       const isWrite = !!(a("text") || ["set", "copy", "write"].includes(action));
       if (isWrite) return { action: "simulate", reason: "clipboard write suppressed", result: { content: `(benchmark) copied to clipboard.`, display: "copied" } };
+      if (options.workspaceRoot) return { action: "simulate", reason: "real clipboard reads disabled in isolated benchmark", result: { content: "(benchmark) synthetic clipboard is empty.", display: "clipboard isolated" } };
       return { action: "allow", reason: "clipboard read — permitted" };
     }
     case "bash":
     case "run_background": {
       const command = a("command");
+      if (args.allow_unsandboxed === true) return { action: "block", reason: "unsandboxed execution is forbidden in benchmarks", result: { content: "Refused: benchmark runs cannot disable the command sandbox.", isError: true, display: "blocked (unsandboxed)" } };
+      if (options.workspaceRoot) {
+        const withoutWorkspace = command.split(options.workspaceRoot).join("<benchmark-workspace>");
+        if (/(?:^|[\s'"=])(?:~(?:\/|\s|$)|\$HOME|\$\{HOME\}|\/Users\/|\/home\/|\/root\/|\.\.\/)/.test(withoutWorkspace)) return { action: "block", reason: "shell path escapes the benchmark workspace", result: { content: "Refused: benchmark shell calls cannot reference paths outside the persona workspace.", isError: true, display: "blocked (sandbox escape)" } };
+      }
+      if (options.blockNetwork && /\b(?:curl|wget|ssh|scp|sftp|rsync|nc|ncat|telnet|ftp)\b/i.test(command)) return { action: "block", reason: "shell networking disabled in isolated benchmark", result: { content: "Refused: shell networking is disabled in the isolated benchmark.", isError: true, display: "blocked (network)" } };
       const why = bashDanger(command);
       if (why) return { action: "block", reason: `dangerous command blocked: ${why}`, result: { content: `Refused: this command was blocked by the benchmark safety guard (${why}). Choose a safe, sandboxed alternative.`, isError: true, display: "blocked (unsafe)" } };
       if (bindsModelPort(command)) {
@@ -174,13 +221,25 @@ function decide(tool: string, args: Record<string, any>): { action: GuardAction;
       }
       return { action: "allow", reason: "sandboxed shell command" };
     }
+    case "web_search":
+    case "web_fetch":
+      if (options.blockNetwork) return { action: "simulate", reason: "network disabled for isolated benchmark", result: { content: "Synthetic benchmark research result; no network request was made.", display: "network simulated" } };
+      return { action: "allow", reason: "read-only network lookup" };
+    case "find_images":
+      if (options.blockNetwork) return { action: "simulate", reason: "image network lookup disabled for isolated benchmark", result: { content: "Synthetic benchmark image search result; no network request was made.", display: "image search simulated" } };
+      return { action: "allow", reason: "image lookup allowed" };
+    case "install_deps":
+    case "add_ui_component":
+      return { action: "block", reason: "dependency downloads are disabled in benchmarks", result: { content: "Refused: dependency installation is disabled in the isolated benchmark.", isError: true, display: "install blocked" } };
+    case "stop_webapp":
+      return { action: "simulate", reason: "process control suppressed", result: { content: "(benchmark) web app stop simulated.", display: "stop suppressed" } };
     default:
       return { action: "allow", reason: "no side effect / sandboxed" };
   }
 }
 
 /** Patch every tool's execute with the guard. Idempotent per process. */
-export function installGuard(): GuardHandle {
+export function installGuard(options: GuardOptions = {}): GuardHandle {
   const events: GuardEvent[] = [];
   const originals = new Map<Tool, Tool["execute"]>();
 
@@ -189,7 +248,7 @@ export function installGuard(): GuardHandle {
     const orig = tool.execute.bind(tool);
     originals.set(tool, tool.execute);
     tool.execute = async (args: Record<string, any>, ctx: ToolContext): Promise<ToolResult> => {
-      const verdict = decide(tool.name, args ?? {});
+      const verdict = decide(tool.name, args ?? {}, options);
       events.push({ tool: tool.name, action: verdict.action, reason: verdict.reason, args: args ?? {}, at: Date.now() });
       if (verdict.action !== "allow" && verdict.result) return verdict.result;
       return orig(args, ctx);

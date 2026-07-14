@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nextCronTime, parseCron } from "../src/agent/scheduler.ts";
+import { resolveOnceTime } from "../src/tools/schedule.ts";
 
 describe("cron parsing", () => {
   test("rejects malformed expressions", () => {
@@ -59,6 +60,25 @@ describe("cron parsing", () => {
     // Next match is Monday the 6th at 00:00 (before the 1st of next month).
     expect(d.getDate()).toBe(6);
     expect(d.getDay()).toBe(1);
+  });
+});
+
+describe("natural one-off reminder times", () => {
+  test("resolves a weekday and meridiem without model date arithmetic", () => {
+    const now = new Date(2026, 8, 16, 12, 0, 0).getTime(); // Wednesday
+    const resolved = resolveOnceTime({ at: "Thursday at 6 PM" }, now);
+    const date = new Date(resolved!);
+    expect(date.getDay()).toBe(4);
+    expect(date.getDate()).toBe(17);
+    expect(date.getHours()).toBe(18);
+    expect(date.getMinutes()).toBe(0);
+  });
+
+  test("rolls the same weekday to next week when its time passed", () => {
+    const now = new Date(2026, 8, 17, 19, 0, 0).getTime(); // Thursday 7 PM
+    const resolved = new Date(resolveOnceTime({ at: "Thursday 6 PM" }, now)!);
+    expect(resolved.getDate()).toBe(24);
+    expect(resolved.getHours()).toBe(18);
   });
 });
 

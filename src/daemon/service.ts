@@ -73,10 +73,11 @@ export async function runDaemon(): Promise<void> {
           await agent.run(item.prompt, {
             onContent: (d) => { reply += d; },
             requestApproval: async (call) => {
-              const signature = `${call.name}:${JSON.stringify(call.args)}`;
+              const signature = `${call.name}:${call.argumentHash ?? JSON.stringify(call.args)}`;
               if (item.approvedSignature === signature) { updateWork(item.id, { approvedSignature: undefined, pendingApproval: undefined }); return "approve"; }
-              approvalNeeded = true; failure = `Approval required: ${call.name} — ${call.summary}`;
-              updateWork(item.id, { pendingApproval: { name: call.name, args: call.args, summary: call.summary, signature } });
+              const argumentHash = call.argumentHash ?? signature.slice(signature.indexOf(":") + 1);
+              approvalNeeded = true; failure = `Approval required: ${call.name} — ${call.summary} (arguments ${argumentHash.slice(0, 16)}…)`;
+              updateWork(item.id, { pendingApproval: { name: call.name, args: call.args, summary: call.summary, details: call.details, argumentHash, signature } });
               return "deny";
             },
             onError: (m) => { failure = m; },

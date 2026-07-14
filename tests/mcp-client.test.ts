@@ -2,9 +2,10 @@ import { describe, expect, test, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StdioMcpClient } from "../src/mcp/transport.ts";
+import { StdioMcpClient, mcpChildEnvironment } from "../src/mcp/transport.ts";
 import { connectMcpServers, shutdownMcp } from "../src/mcp/manager.ts";
 import { loadEnabledServers } from "../src/mcp/config.ts";
+import { projectMcpConfigStatuses, trustProjectMcpConfigs } from "../src/mcp/trust.ts";
 import type { Tool } from "../src/tools/types.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "fake-mcp-server.ts");
@@ -47,9 +48,9 @@ describe("manager tool adaptation", () => {
 
     const echo = registered.find((t) => t.name === "mcp__fake__echo")!;
     const shout = registered.find((t) => t.name === "mcp__fake__shout")!;
-    // Approval policy: MCP tools run without prompting (only local delete/move asks).
+    // Explicit read-only hints run freely; unknown/mutating tools fail closed.
     expect(echo.risk({})).toBe("safe");
-    expect(shout.risk({})).toBe("safe");
+    expect(shout.risk({})).toBe("caution");
     // description carries the server-origin prefix.
     expect(echo.description.startsWith("[mcp:fake]")).toBe(true);
     // inputSchema coerced, required preserved.
@@ -82,8 +83,11 @@ describe("manager tool adaptation", () => {
 });
 
 describe("config precedence", () => {
-  test("project config overrides and can disable lower layers", () => {
+  test("project config is ignored until its exact content hash is trusted", () => {
     const dir = mkdtempSync(join(tmpdir(), "sophie-mcp-"));
+    const profile = mkdtempSync(join(tmpdir(), "sophie-mcp-home-"));
+    const previousTrustPath = process.env.SOPHIE_MCP_TRUST_PATH;
+    process.env.SOPHIE_MCP_TRUST_PATH = join(profile, "mcp-project-trust.json");
     try {
       mkdirSync(join(dir, ".sophie"), { recursive: true });
       // Global layer enables a server; project layer disables it and adds another.
@@ -95,11 +99,30 @@ describe("config precedence", () => {
         join(dir, ".mcp.json"),
         JSON.stringify({ mcpServers: { foo: { command: "echo", disabled: true }, bar: { command: "echo" } } }),
       );
-      const servers = loadEnabledServers(dir);
+      let servers = loadEnabledServers(dir);
+      expect(servers.bar).toBeUndefined();
+      expect(projectMcpConfigStatuses(dir).find((item) => item.path.endsWith("/.mcp.json"))?.trusted).toBe(false);
+      trustProjectMcpConfigs(dir);
+      servers = loadEnabledServers(dir);
       expect(servers.foo).toBeUndefined(); // disabled by project layer
       expect(servers.bar).toBeTruthy();
+      expect(projectMcpConfigStatuses(dir).find((item) => item.path.endsWith("/.mcp.json"))?.trusted).toBe(true);
+      writeFileSync(join(dir, ".mcp.json"), JSON.stringify({ mcpServers: { changed: { command: "echo" } } }));
+      expect(loadEnabledServers(dir).changed).toBeUndefined();
+      expect(projectMcpConfigStatuses(dir).find((item) => item.path.endsWith("/.mcp.json"))?.trusted).toBe(false);
     } finally {
+      if (previousTrustPath === undefined) delete process.env.SOPHIE_MCP_TRUST_PATH;
+      else process.env.SOPHIE_MCP_TRUST_PATH = previousTrustPath;
       rmSync(dir, { recursive: true, force: true });
+      rmSync(profile, { recursive: true, force: true });
     }
+  });
+
+  test("MCP child environment does not inherit Sophie credentials", () => {
+    process.env.SOPHIE_API_KEY = "must-not-leak";
+    const env = mcpChildEnvironment({ EXPLICIT_FOR_SERVER: "yes" });
+    expect(env.SOPHIE_API_KEY).toBeUndefined();
+    expect(env.EXPLICIT_FOR_SERVER).toBe("yes");
+    delete process.env.SOPHIE_API_KEY;
   });
 });

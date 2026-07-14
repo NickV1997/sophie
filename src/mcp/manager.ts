@@ -1,6 +1,7 @@
 import { loadEnabledServers, type McpServerConfig } from "./config.ts";
 import { StdioMcpClient, type McpContentPart, type McpToolDef } from "./transport.ts";
 import type { JSONSchema, RiskLevel, Tool, ToolResult } from "../tools/types.ts";
+import { projectMcpConfigStatuses } from "./trust.ts";
 
 /**
  * Connects to configured MCP servers, adapts their tools into Sophie `Tool`s,
@@ -35,6 +36,10 @@ let registeredCount = 0;
 
 /** Connect to all enabled servers in the background. Never throws. */
 export async function connectMcpServers(opts: ConnectOptions): Promise<void> {
+  const status = opts.onStatus ?? (() => {});
+  for (const project of projectMcpConfigStatuses(opts.cwd).filter((item) => !item.trusted)) {
+    status(`MCP: ignored untrusted project config ${project.path}. Review it, then run \`sophie mcp trust\` in that project.`);
+  }
   const servers = opts.servers ?? loadEnabledServers(opts.cwd);
   const names = Object.keys(servers);
   if (names.length === 0) return;
@@ -43,7 +48,7 @@ export async function connectMcpServers(opts: ConnectOptions): Promise<void> {
 
 async function connectOne(name: string, cfg: McpServerConfig, opts: ConnectOptions): Promise<void> {
   const status = opts.onStatus ?? (() => {});
-  const client = new StdioMcpClient(name, { command: cfg.command, args: cfg.args, env: cfg.env, cwd: opts.cwd });
+  const client = new StdioMcpClient(name, { command: cfg.command, args: cfg.args, env: cfg.env, cwd: opts.cwd, permissions: cfg.permissions });
   try {
     await client.initialize(CONNECT_TIMEOUT_MS);
     const defs = await client.listTools(CONNECT_TIMEOUT_MS);
@@ -84,9 +89,13 @@ function adaptTool(server: string, def: McpToolDef): Tool {
     description: desc,
     parameters: coerceSchema(def.inputSchema),
     summarize: () => `${server}: ${def.name}`,
-    // Approval policy: only local file delete/move prompts (see bash classifier).
-    // MCP tools (user-enabled servers) run without prompting.
-    risk: (): RiskLevel => "safe",
+    // MCP annotations are useful hints, not authority. Unknown and mutating tools
+    // require approval; only an explicitly read-only tool can run freely.
+    risk: (): RiskLevel => def.annotations?.destructiveHint === true
+      ? "dangerous"
+      : def.annotations?.readOnlyHint === true
+        ? "safe"
+        : "caution",
     async execute(args): Promise<ToolResult> {
       const client = clients.get(server);
       if (!client) {

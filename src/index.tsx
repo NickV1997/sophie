@@ -3,6 +3,7 @@ import { createRoot } from "@opentui/react";
 import { config, getContextWindow, setContextWindow } from "./config.ts";
 import { detectContextWindow, detectLoadedModel, ping } from "./llm/client.ts";
 import { connectMcpServers, shutdownMcp } from "./mcp/manager.ts";
+import { startNightlyDreamSchedule } from "./memory/dream.ts";
 import { stopTelegramBridge } from "./channels/telegram.ts";
 import { publishMcpStatus } from "./mcp/status.ts";
 import { registerMcpTools } from "./tools/registry.ts";
@@ -12,10 +13,13 @@ import { App } from "./tui/App.tsx";
 let activeRenderer: CliRenderer | null = null;
 let handlersInstalled = false;
 let cleanedUp = false;
+let stopNightlyDream: (() => void) | null = null;
 
 function cleanupRenderer(): void {
   if (cleanedUp) return;
   cleanedUp = true;
+  stopNightlyDream?.();
+  stopNightlyDream = null;
   stopTelegramBridge();
   stopTtsSidecar();
   shutdownMcp();
@@ -82,6 +86,9 @@ export async function start(): Promise<void> {
   cleanedUp = false;
   installExitHandlers();
   createRoot(renderer).render(<App modelDetail={loadedModel.id} />);
+
+  // While the TUI is open, consolidate memory every night at 3 AM local time.
+  stopNightlyDream = startNightlyDreamSchedule(process.cwd());
 
   if (nCtx && nCtx < config.contextWindow) {
     publishMcpStatus(

@@ -54,6 +54,15 @@ describe("QwenStreamParser tool-call parsing", () => {
     expect(calls[0].arguments.command).toBe("ls");
   });
 
+  test("closes a missing outer brace without changing the requested action", () => {
+    const parser = new QwenStreamParser(() => {}, () => {});
+    parser.push('<tool_call>{"name":"manage_tasks","arguments":{"action":"add","tasks":[{"title":"Buy paper"}]}</tool_call>');
+    expect(parser.finalize()).toEqual([expect.objectContaining({
+      name: "manage_tasks",
+      arguments: { action: "add", tasks: [{ title: "Buy paper" }] },
+    })]);
+  });
+
   test("ignores a malformed block that cannot be repaired", () => {
     const calls = parse("<tool_call>this is not json at all</tool_call>");
     expect(calls.length).toBe(0);

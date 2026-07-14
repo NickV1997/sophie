@@ -633,7 +633,7 @@ export function App({ modelDetail }: { modelDetail: string }) {
                 setPending({ call, resolve: finish });
                 if (remote) {
                   void sendTelegram(
-                    `🔐 Approve this action?\n${call.name} — ${call.summary}\n\nReply "yes" to approve or "no" to deny.`,
+                    `🔐 Approve this action?\n${call.name} — ${call.summary}\n\n${(call.details ?? "").slice(0, 2500)}\n\nReply "yes" to approve or "no" to deny.`,
                   );
                   void awaitTelegramReply({ timeoutMs: 30 * 60_000, signal: remote.signal }).then((msg) => {
                     if (!msg || settled) return;
@@ -994,7 +994,8 @@ export function App({ modelDetail }: { modelDetail: string }) {
       return;
     }
     if (pending) {
-      if (key.name === "y" || key.name === "return") pending.resolve("approve");
+      if (key.name === "y") pending.resolve("approve");
+      else if (key.name === "return") pending.resolve("deny");
       else if (key.name === "n") pending.resolve("deny");
       else if (key.name === "escape") cancelTurn();
       return;
@@ -1640,10 +1641,11 @@ function ApprovalBar({ call }: { call: ToolCallEvent }) {
         <b>{`${dangerous ? "⚠ DANGEROUS ACTION" : "Approve action"} — ${call.name}`}</b>
       </text>
       <text fg={theme.text} wrapMode="word">{call.summary}</text>
+      {call.details && <text fg={theme.dim} wrapMode="word">{call.details}</text>}
       <text fg={theme.dim}>
         {"  "}
         <span fg={theme.green}>[y]</span> approve{"   "}
-        <span fg={theme.error}>[n]</span> deny
+        <span fg={theme.error}>[n/enter]</span> deny
       </text>
     </box>
   );

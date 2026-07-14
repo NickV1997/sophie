@@ -18,10 +18,16 @@ describe("per-intent few-shot selection", () => {
     expect(shot).toContain("No task list");
   });
 
-  test("coding jobs get the locate→edit→verify example", () => {
-    const shot = fewShotForTurn(intent("new_job"), "normal");
-    expect(shot).toContain("edit_file");
-    expect(shot).toContain("tsc --noEmit");
+  test("non-coding jobs do not receive a misleading code-edit example", () => {
+    expect(fewShotForTurn(intent("new_job"), "normal")).toBe("");
+  });
+
+  test("personal multi-record jobs get the compact batch example", () => {
+    const personal = { ...intent("standalone_action"), expectedTools: ["projects", "people", "manage_tasks"] };
+    const shot = fewShotForTurn(personal, "normal");
+    expect(shot).toContain('"projects"');
+    expect(shot).toContain('"people"');
+    expect(shot).toContain('"tasks"');
   });
 
   test("build mode uses the edit/verify example", () => {
@@ -30,8 +36,12 @@ describe("per-intent few-shot selection", () => {
 
   test("examples are valid tool-call JSON the parser would accept", async () => {
     const { safeParseCall } = await import("../src/llm/qwen.ts");
-    for (const kind of ["quick_check", "new_job"] as const) {
-      const shot = fewShotForTurn(intent(kind), "normal");
+    const examples = [
+      fewShotForTurn(intent("quick_check"), "normal"),
+      fewShotForTurn({ ...intent("standalone_action"), expectedTools: ["projects", "people", "manage_tasks"] }, "normal"),
+      fewShotForTurn(intent("continue_job"), "build"),
+    ];
+    for (const shot of examples) {
       const bodies = [...shot.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)].map((m) => m[1]);
       expect(bodies.length).toBeGreaterThan(0);
       for (const body of bodies) {

@@ -9,6 +9,11 @@ import type { ChatContent, ChatMessage } from "../llm/client.ts";
  */
 const WINDOW_SAFETY = 0.92;
 
+/** Sophie deliberately does not use a local server's entire context window.
+ * Quality falls before the transport limit on current 9B–122B local models;
+ * 28k leaves room below the observed ~32k degradation point. */
+export const MAX_WORKING_CONTEXT_TOKENS = 28_000;
+
 /**
  * Context-window accounting for long runs. A small model with a fixed window
  * (e.g. 32k) cannot run for hours unless we (a) cap how much any single tool
@@ -61,7 +66,12 @@ export function clipForHistory(content: string, maxChars = 4000, favor: "head" |
 
 /** Usable window after the safety buffer — the real ceiling for any one request. */
 export function usableContextWindow(): number {
-  return Math.floor(getContextWindow() * WINDOW_SAFETY);
+  return Math.min(MAX_WORKING_CONTEXT_TOKENS, Math.floor(getContextWindow() * WINDOW_SAFETY));
+}
+
+/** Preferred prompt ceiling for one model tier, always leaving synthesis room. */
+export function promptTokenBudget(recommendedPromptTokens: number, completionReserve = 512): number {
+  return Math.max(2_000, Math.min(recommendedPromptTokens, usableContextWindow() - completionReserve));
 }
 
 /** Tokens reserved for the model's reply. Scaled so it never dominates a small
@@ -87,6 +97,38 @@ export function historyBudget(systemTokens: number, modelHistoryCap = config.max
  */
 export function safeMaxTokens(promptTokens: number): number {
   return Math.max(256, Math.min(config.maxTokens, usableContextWindow() - promptTokens));
+}
+
+export interface FittedPrompt {
+  messages: ChatMessage[];
+  droppedHistoryMessages: number;
+}
+
+/** Last-mile prompt fitting. Preserve the base system prompt, the current user
+ * request, every tool result from this turn, and the trailing live-state block.
+ * Older verbatim chat is optional because compaction/memory/task state already
+ * carries its useful facts. */
+export function fitPromptMessages(
+  system: ChatMessage,
+  history: ChatMessage[],
+  liveState: ChatMessage,
+  maxPromptTokens: number,
+  preserveFromIndex?: number,
+): FittedPrompt {
+  const currentUser = preserveFromIndex !== undefined && preserveFromIndex >= 0
+    ? preserveFromIndex
+    : history.findLastIndex((message) => message.role === "user");
+  const required = currentUser >= 0 ? history.slice(currentUser) : [];
+  const older = currentUser >= 0 ? history.slice(0, currentUser) : history;
+  const keptOlder: ChatMessage[] = [];
+  let messages = [system, ...required, liveState];
+  for (let index = older.length - 1; index >= 0; index--) {
+    const candidate = [system, older[index]!, ...keptOlder, ...required, liveState];
+    if (messagesTokens(candidate) > maxPromptTokens) break;
+    keptOlder.unshift(older[index]!);
+    messages = candidate;
+  }
+  return { messages, droppedHistoryMessages: older.length - keptOlder.length };
 }
 
 /** Strip a model's <think> trace from a one-shot result (e.g. a summary). */

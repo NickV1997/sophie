@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { addJournalEntry } from "../agent/tasks.ts";
 import { noteFileTouch } from "../agent/workset.ts";
 import type { Tool, ToolResult } from "./types.ts";
+import { sanitizedCommandEnvironment, sandboxedShellCommand, supportsCommandSandbox } from "../system/command-sandbox.ts";
 
 /**
  * Builder tools — the deterministic chores every project build repeats, moved
@@ -23,8 +24,13 @@ function abs(cwd: string, p: string): string {
   return isAbsolute(p) ? p : resolve(cwd, p);
 }
 
-async function run(cmd: string[], cwd: string, signal?: AbortSignal): Promise<{ code: number; text: string }> {
-  const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", signal });
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+async function run(cmd: string[], cwd: string, signal?: AbortSignal, sandboxed = false): Promise<{ code: number; text: string }> {
+  const argv = sandboxed ? sandboxedShellCommand(cmd.map(shellQuote).join(" "), cwd) : cmd;
+  const proc = Bun.spawn(argv, { cwd, env: sanitizedCommandEnvironment(), stdout: "pipe", stderr: "pipe", signal });
   const kill = () => {
     try {
       proc.kill();
@@ -105,7 +111,7 @@ export const installDeps: Tool = {
     },
   } as any,
   summarize: (a) => (Array.isArray(a.packages) && a.packages.length ? `install ${a.packages.join(" ")}` : "install deps"),
-  risk: () => "safe",
+  risk: () => "caution",
   async execute(args, ctx) {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     if (!existsSync(root)) return { content: `Path does not exist: ${root}`, isError: true };
@@ -151,7 +157,7 @@ export const addUiComponent: Tool = {
     required: ["components"],
   } as any,
   summarize: (a) => `add ui: ${(Array.isArray(a.components) ? a.components : []).join(", ")}`,
-  risk: () => "safe",
+  risk: () => "caution",
   async execute(args, ctx) {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     const components = Array.isArray(args.components) ? args.components.map(String).map((s) => s.trim()).filter(Boolean) : [];
@@ -181,10 +187,11 @@ export const projectChecks: Tool = {
     properties: {
       path: { type: "string", description: "Project directory. Defaults to cwd." },
       only: { type: "array", items: { type: "string" }, description: "Restrict to these gates, e.g. ['typecheck','test']. Omit to run all available." },
+      allow_unsandboxed: { type: "boolean", description: "Run project scripts without the network/write sandbox. Requires explicit approval." },
     },
   } as any,
   summarize: (a) => `project checks ${a.path ?? "."}`,
-  risk: () => "safe",
+  risk: (a) => a.allow_unsandboxed || !supportsCommandSandbox() ? "caution" : "safe",
   async execute(args, ctx): Promise<ToolResult> {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     if (!existsSync(root)) return { content: `Path does not exist: ${root}`, isError: true };
@@ -217,7 +224,7 @@ export const projectChecks: Tool = {
     const lines: string[] = [];
     let failed = 0;
     for (const gate of gates) {
-      const out = await run(gate.cmd, root, ctx.signal);
+      const out = await run(gate.cmd, root, ctx.signal, !ctx.approved && !args.allow_unsandboxed);
       const pass = out.code === 0;
       if (!pass) failed++;
       lines.push(`${pass ? "PASS" : "FAIL"} · ${gate.name}\n${out.text}`);
@@ -242,20 +249,20 @@ export const gitCheckpoint: Tool = {
     required: ["message"],
   },
   summarize: (a) => `checkpoint: ${String(a.message ?? "").slice(0, 40)}`,
-  risk: () => "safe",
+  risk: () => supportsCommandSandbox() ? "safe" : "caution",
   async execute(args, ctx) {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     if (!existsSync(root)) return { content: `Path does not exist: ${root}`, isError: true };
     const message = String(args.message ?? "").trim() || "checkpoint";
     const logs: string[] = [];
     if (!existsSync(join(root, ".git"))) {
-      logs.push((await run(["git", "init"], root, ctx.signal)).text);
+      logs.push((await run(["git", "init"], root, ctx.signal, true)).text);
       // Set a local identity so commits don't fail on a fresh machine.
-      await run(["git", "config", "user.email", "sophie@localhost"], root, ctx.signal);
-      await run(["git", "config", "user.name", "Sophie"], root, ctx.signal);
+      await run(["git", "config", "user.email", "sophie@localhost"], root, ctx.signal, true);
+      await run(["git", "config", "user.name", "Sophie"], root, ctx.signal, true);
     }
-    logs.push((await run(["git", "add", "-A"], root, ctx.signal)).text);
-    const commit = await run(["git", "commit", "-m", message], root, ctx.signal);
+    logs.push((await run(["git", "add", "-A"], root, ctx.signal, true)).text);
+    const commit = await run(["git", "commit", "-m", message], root, ctx.signal, true);
     logs.push(commit.text);
     const nothingToCommit = /nothing to commit/i.test(commit.text);
     const ok = commit.code === 0 || nothingToCommit;

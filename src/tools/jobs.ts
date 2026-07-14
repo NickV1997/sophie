@@ -19,11 +19,12 @@ export const runBackground: Tool = {
     type: "object",
     properties: {
       command: { type: "string", description: "The shell command to run in the background." },
+      allow_unsandboxed: { type: "boolean", description: "Run without Sophie's network/write sandbox. Requires explicit approval." },
     },
     required: ["command"],
   },
   summarize: (a) => a.command,
-  risk: (a) => classifyCommand(a.command ?? ""),
+  risk: (a) => a.allow_unsandboxed ? "caution" : classifyCommand(a.command ?? ""),
   async execute(args, ctx) {
     const command = String(args.command ?? "").trim();
     if (!command) return { content: "Error: empty command.", isError: true };
@@ -49,7 +50,7 @@ export const runBackground: Tool = {
         display: "restricted: protected path blocked",
       };
     }
-    const job = startJob(command, ctx.cwd);
+    const job = startJob(command, ctx.cwd, { sandboxed: !ctx.approved && !args.allow_unsandboxed });
     return {
       content:
         `Started background job ${job.id} (pid running).\n` +

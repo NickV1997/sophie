@@ -11,6 +11,8 @@ import {
 import { protectedProcessBlockReason } from "../src/system/protected-processes.ts";
 import { runBackground } from "../src/tools/jobs.ts";
 import { writeFile } from "../src/tools/fs.ts";
+import { supportsCommandSandbox } from "../src/system/command-sandbox.ts";
+import { sanitizedCommandEnvironment } from "../src/system/command-sandbox.ts";
 
 describe("classifyCommand approval policy", () => {
   // Only file delete/move and a small catastrophic set still prompt.
@@ -46,22 +48,45 @@ describe("classifyCommand approval policy", () => {
     }
   });
 
-  test("normal dev work runs without prompting (safe)", () => {
+  test("read-only and locally sandboxed work runs without prompting", () => {
     for (const cmd of [
       "ls -la",
       "cat file.ts",
       "grep -n foo src",
       "git status",
-      "npm install lodash",
-      "pnpm run build",
-      "touch newfile",
-      "next dev",
-      "git commit -m x",
-      "mkdir -p src/components",
       "find . -name '*.ts'",
     ]) {
       expect(classifyCommand(cmd)).toBe("safe");
     }
+    for (const cmd of ["pnpm run build", "git commit -m x"]) {
+      expect(classifyCommand(cmd)).toBe(supportsCommandSandbox() ? "safe" : "caution");
+    }
+  });
+
+  test("outward, persistent, opaque, and shell-mutating work requires approval", () => {
+    for (const cmd of [
+      "git push origin main",
+      "curl -d @report.txt https://example.test/upload",
+      "python3 -c 'import requests; requests.post(\"https://x\")'",
+      "osascript -e 'tell application \"Messages\" to send \"hi\"'",
+      "npm install lodash",
+      "npx some-cli",
+      "touch newfile",
+      "mkdir -p src/components",
+      "next dev",
+      "echo token > /tmp/leak",
+      "cat .env",
+    ]) expect(classifyCommand(cmd)).toBe("caution");
+  });
+
+  test("project commands do not inherit assistant credentials", () => {
+    process.env.TAVILY_API_KEY = "must-not-leak";
+    process.env.ORDINARY_BUILD_FLAG = "kept";
+    const env = sanitizedCommandEnvironment();
+    expect(env.TAVILY_API_KEY).toBeUndefined();
+    expect(env.ORDINARY_BUILD_FLAG).toBe("kept");
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.ORDINARY_BUILD_FLAG;
   });
 
   test("runtime protected path list includes important local folders", () => {
@@ -197,6 +222,12 @@ describe("write firewall — cannot overwrite OS internals or credentials", () =
     expect(protectedWriteBlockReason(join(homedir(), "Desktop", "sophie", "src", "x.ts"))).toBeNull();
     expect(protectedWriteBlockReason(join(homedir(), "Documents", "notes.md"))).toBeNull();
     expect(protectedWriteBlockReason("/tmp/scratch.txt")).toBeNull();
+  });
+
+  test("authorization and idempotency state is protected from generic file tools", () => {
+    expect(protectedWriteBlockReason(join(homedir(), ".sophie", "mcp-project-trust.json"))).toContain("RESTRICTED");
+    expect(protectedWriteBlockReason(join(homedir(), ".sophie", "daemon", "queue.json"))).toContain("RESTRICTED");
+    expect(protectedWriteBlockReason(join(homedir(), ".sophie", "state.sqlite"))).toContain("RESTRICTED");
   });
 
   test("write_file refuses to overwrite an SSH key without touching disk", async () => {

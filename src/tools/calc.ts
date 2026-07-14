@@ -271,13 +271,13 @@ export const calc: Tool = {
     "% (modulo) ^ (power), parentheses, constants (pi, e, tau) and functions " +
     "(sqrt, abs, round, floor, ceil, ln, log, log2, exp, sin/cos/tan, min, max, mean, stddev, " +
     "pow, hypot, gcd, lcm, fact). Write percentages as decimals, e.g. '15% of 200' " +
-    "as '0.15*200'.",
+    "as '0.15*200'. The expression must answer the current user request; do not calculate unrelated dates or numbers from older turns or live metadata.",
   parameters: {
     type: "object",
     properties: {
       expression: {
         type: "string",
-        description: "The math expression to evaluate, e.g. '(1234.5 * 0.0825) + 10' or 'sqrt(2)^2'.",
+        description: "The expression for the current request, using its quantities, e.g. '(1234.5 * 0.0825) + 10' or 'sqrt(2)^2'. Ignore unrelated dates/numbers from prior context.",
       },
     },
     required: ["expression"],

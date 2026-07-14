@@ -4,10 +4,12 @@
  * reports ✓ / ✗ / ― (not configured) per line. All probes run in parallel
  * with short timeouts; a hung dependency reads as a failure, not a hang.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
-import { config, getContextWindow, REPO_ROOT } from "../config.ts";
+import { config, getContextWindow } from "../config.ts";
+import { loadEnabledServers } from "../mcp/config.ts";
+import { projectMcpConfigStatuses } from "../mcp/trust.ts";
 import { ping } from "../llm/client.ts";
 import { telegramConfigured, telegramReady, telegramToken } from "../channels/telegram.ts";
 import { listSchedule } from "../agent/scheduler.ts";
@@ -86,16 +88,12 @@ async function checkTelegram(): Promise<string> {
 }
 
 function checkMcp(cwd: string): string {
-  const candidates = [join(cwd, "mcp.json"), join(REPO_ROOT, "mcp.json")];
-  const found = candidates.find((p) => existsSync(p));
-  if (!found) return line(OFF, "mcp", "no mcp.json — no MCP servers configured");
-  try {
-    const json = JSON.parse(readFileSync(found, "utf8"));
-    const servers = Object.keys(json?.mcpServers ?? json?.servers ?? {});
-    return line(OK, "mcp", `${servers.length} server${servers.length === 1 ? "" : "s"} configured (${servers.join(", ") || "none"}) — connect status shows at startup`);
-  } catch {
-    return line(BAD, "mcp", `${found} is not valid JSON`);
-  }
+  const untrusted = projectMcpConfigStatuses(cwd).filter((item) => !item.trusted);
+  if (untrusted.length) return line(BAD, "mcp", `${untrusted.length} untrusted project config(s) ignored — review, then run sophie mcp trust`);
+  const servers = Object.keys(loadEnabledServers(cwd));
+  return servers.length
+    ? line(OK, "mcp", `${servers.length} trusted server${servers.length === 1 ? "" : "s"} configured (${servers.join(", ")}) — connect status shows at startup`)
+    : line(OFF, "mcp", "no trusted MCP servers configured");
 }
 
 async function checkBrowser(): Promise<string> {

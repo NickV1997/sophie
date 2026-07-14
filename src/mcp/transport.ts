@@ -1,3 +1,5 @@
+import { sanitizedCommandEnvironment, sandboxedShellCommand } from "../system/command-sandbox.ts";
+
 /**
  * Minimal MCP stdio client. Speaks newline-delimited JSON-RPC 2.0 to a child
  * process (the MCP server). This is the ONLY protocol code; everything else in
@@ -11,7 +13,7 @@ export interface McpToolDef {
   name: string;
   description?: string;
   inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[] };
-  annotations?: { readOnlyHint?: boolean; title?: string };
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean; title?: string };
 }
 
 export interface McpContentPart {
@@ -40,6 +42,17 @@ export interface StdioServerConfig {
   args?: string[];
   env?: Record<string, string>;
   cwd?: string;
+  permissions?: { network?: boolean; filesystem?: "cwd" | "all" };
+}
+
+const INHERITED_ENV = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE"];
+
+/** MCP children get only process-launch essentials. Credentials must be opted in
+ * explicitly in that server's trusted config instead of leaking wholesale. */
+export function mcpChildEnvironment(explicit: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of INHERITED_ENV) if (process.env[key] !== undefined) env[key] = process.env[key]!;
+  return { ...env, ...explicit };
 }
 
 /** Recursively SIGTERM a process and all its descendants (POSIX: pgrep -P). */
@@ -76,9 +89,19 @@ export class StdioMcpClient {
   /** Spawn the child and run the MCP initialize handshake. */
   async initialize(timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<void> {
     const command = [this.cfg.command, ...(this.cfg.args ?? [])];
-    this.proc = Bun.spawn(command, {
+    const shellQuote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+    const argv = sandboxedShellCommand(
+      command.map(shellQuote).join(" "),
+      this.cfg.cwd ?? process.cwd(),
+      [],
+      {
+        allowNetwork: this.cfg.permissions?.network === true,
+        allowAllWrites: this.cfg.permissions?.filesystem === "all",
+      },
+    );
+    this.proc = Bun.spawn(argv, {
       cwd: this.cfg.cwd,
-      env: { ...process.env, ...(this.cfg.env ?? {}) },
+      env: { ...sanitizedCommandEnvironment(), ...mcpChildEnvironment(this.cfg.env) },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

@@ -52,6 +52,11 @@ describe("ask_user ends the turn", () => {
     expect(r.content).toContain("2. Auth needed?");
   });
 
+  test("schema tells the model that evidence and recommendations belong in the terminal preamble", () => {
+    expect(askUser.description).toContain("final user-facing response");
+    expect(askUser.parameters.properties?.preamble?.description).toContain("recommendation");
+  });
+
   test("errors with no questions", async () => {
     const r = await askUser.execute({ questions: [] }, { cwd: process.cwd() });
     expect(r.isError).toBe(true);

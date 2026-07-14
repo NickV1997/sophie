@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { config, getContextWindow, setContextWindow } from "../src/config.ts";
-import { historyBudget, safeMaxTokens, usableContextWindow } from "../src/agent/context.ts";
+import { fitPromptMessages, historyBudget, MAX_WORKING_CONTEXT_TOKENS, promptTokenBudget, safeMaxTokens, usableContextWindow } from "../src/agent/context.ts";
 
 // Restore the effective window after each test (mutates a module global).
 afterEach(() => setContextWindow(config.contextWindow));
@@ -51,5 +51,29 @@ describe("budgeting buffer", () => {
   test("never requests more completion tokens than configured maxTokens", () => {
     setContextWindow(config.contextWindow);
     expect(safeMaxTokens(10)).toBeLessThanOrEqual(config.maxTokens);
+  });
+
+  test("never uses the server's full huge window as the working context", () => {
+    const original = config.contextWindow;
+    config.contextWindow = 200_000;
+    setContextWindow(200_000);
+    expect(usableContextWindow()).toBe(MAX_WORKING_CONTEXT_TOKENS);
+    config.contextWindow = original;
+  });
+
+  test("fits prompts by dropping old verbatim chat but keeps the current turn", () => {
+    const old = Array.from({ length: 8 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, content: `old-${index} ${"x".repeat(1800)}` }));
+    const current = { role: "user" as const, content: "CURRENT REQUEST must survive" };
+    const tool = { role: "tool" as const, content: "CURRENT TOOL RESULT must survive" };
+    const fitted = fitPromptMessages(
+      { role: "system", content: "system rules" },
+      [...old, current, tool],
+      { role: "user", content: "live state" },
+      promptTokenBudget(3_000),
+    );
+    expect(JSON.stringify(fitted.messages)).toContain("CURRENT REQUEST");
+    expect(JSON.stringify(fitted.messages)).toContain("CURRENT TOOL RESULT");
+    expect(fitted.droppedHistoryMessages).toBeGreaterThan(0);
+    expect(fitted.messages.reduce((total, message) => total + (typeof message.content === "string" ? Math.ceil(message.content.length / 3.5) + 4 : 804), 0)).toBeLessThanOrEqual(3_000);
   });
 });

@@ -19,6 +19,12 @@ VOICES_PATH = os.environ.get("SOPHIE_TTS_VOICES", os.path.join(MODEL_DIR, "tts/v
 DEFAULT_SPEAKER = os.environ.get("SOPHIE_TTS_SPEAKER", os.environ.get("SOPHIE_SPEAK_VOICE", "bf_emma"))
 PORT = int(os.environ.get("SOPHIE_TTS_PORT", 8090))
 HOST = os.environ.get("SOPHIE_TTS_HOST", "127.0.0.1")
+# Natural-pacing pauses inserted between clauses/sentences (0 disables).
+SENTENCE_PAUSE_MS = int(os.environ.get("SOPHIE_TTS_SENTENCE_PAUSE_MS", 400))
+COMMA_PAUSE_MS = int(os.environ.get("SOPHIE_TTS_COMMA_PAUSE_MS", 200))
+# Clauses shorter than this merge into a neighbor, so list-y text such as
+# "red, green, blue" is not chopped into staccato fragments.
+MIN_CLAUSE_CHARS = 12
 
 kokoro = None
 kokoro_lock = threading.Lock()
@@ -33,6 +39,72 @@ def load_model():
     kokoro = Kokoro(MODEL_PATH, VOICES_PATH)
     ready = True
     print(f"Kokoro ready. Default voice: {DEFAULT_SPEAKER}", flush=True)
+
+
+def split_segments(text: str, sentence_pause_ms: int, comma_pause_ms: int):
+    """Split text into (segment, pause_ms_after) pairs.
+
+    Sentences always become segments. Commas become segments only when both
+    sides are long enough to carry their own intonation. The final segment of
+    the text gets a trailing sentence pause only when the text actually ends a
+    sentence — callers stream clause-sized chunks, and this keeps the pause at
+    a chunk boundary identical to a pause inside one chunk.
+    """
+    import re
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?;:])\s+", text) if s.strip()]
+    segments = []
+    for si, sentence in enumerate(sentences):
+        clauses = [c.strip() for c in re.split(r"(?<=,)\s+", sentence) if c.strip()] if comma_pause_ms > 0 else [sentence]
+        merged = []
+        for clause in clauses:
+            if merged and (len(merged[-1]) < MIN_CLAUSE_CHARS or len(clause) < MIN_CLAUSE_CHARS):
+                merged[-1] = f"{merged[-1]} {clause}"
+            else:
+                merged.append(clause)
+        for ci, clause in enumerate(merged):
+            last_clause = ci == len(merged) - 1
+            if not last_clause:
+                pause = comma_pause_ms
+            elif si < len(sentences) - 1:
+                pause = sentence_pause_ms
+            else:
+                pause = sentence_pause_ms if re.search(r"[.!?]\s*$", clause) else 0
+            segments.append((clause, pause))
+    return segments
+
+
+def trim_edge_silence(audio, sample_rate: int, threshold: float = 0.004, keep_ms: int = 40):
+    """Trim Kokoro's ragged leading/trailing silence so inserted pauses are
+    exact rather than stacked on whatever the model happened to emit."""
+    import numpy as np
+
+    voiced = np.where(np.abs(audio) > threshold)[0]
+    if voiced.size == 0:
+        return audio
+    keep = int(sample_rate * keep_ms / 1000)
+    start = max(0, int(voiced[0]) - keep)
+    end = min(len(audio), int(voiced[-1]) + keep)
+    return audio[start:end]
+
+
+def synthesize_with_pauses(text: str, speaker: str, speed: float, lang: str,
+                           sentence_pause_ms: int, comma_pause_ms: int):
+    import numpy as np
+
+    segments = split_segments(text, sentence_pause_ms, comma_pause_ms)
+    if len(segments) <= 1 and (not segments or segments[0][1] == 0):
+        return kokoro.create(text, voice=speaker, speed=speed, lang=lang)
+
+    parts = []
+    sample_rate = 24000
+    for seg_text, pause_ms in segments:
+        samples, sample_rate = kokoro.create(seg_text, voice=speaker, speed=speed, lang=lang)
+        parts.append(trim_edge_silence(np.asarray(samples, dtype=np.float32), sample_rate))
+        if pause_ms > 0:
+            # Faster speech naturally has shorter gaps; scale pauses with speed.
+            parts.append(np.zeros(int(sample_rate * pause_ms / max(speed, 0.5) / 1000), dtype=np.float32))
+    return np.concatenate(parts), sample_rate
 
 
 def build_wav(samples, sample_rate: int) -> bytes:
@@ -139,6 +211,15 @@ class Handler(BaseHTTPRequestHandler):
         speaker = str(body.get("voice") or DEFAULT_SPEAKER).strip() or DEFAULT_SPEAKER
         speed = float(body.get("speed", 1.0))
 
+        def pause_arg(key: str, default: int) -> int:
+            try:
+                return max(0, min(2000, int(body.get(key, default))))
+            except (TypeError, ValueError):
+                return default
+
+        sentence_pause_ms = pause_arg("sentence_pause_ms", SENTENCE_PAUSE_MS)
+        comma_pause_ms = pause_arg("comma_pause_ms", COMMA_PAUSE_MS)
+
         if not ready or kokoro is None:
             self._json(503, {"error": "Model still loading, retry in a moment."})
             return
@@ -147,14 +228,13 @@ class Handler(BaseHTTPRequestHandler):
             lang = "en-gb" if speaker.startswith("bf_") else "en-us"
             with kokoro_lock:
                 try:
-                    samples, sample_rate = kokoro.create(text, voice=speaker, speed=speed, lang=lang)
+                    samples, sample_rate = synthesize_with_pauses(
+                        text, speaker, speed, lang, sentence_pause_ms, comma_pause_ms
+                    )
                 except Exception:
                     fallback_lang = "en-gb" if DEFAULT_SPEAKER.startswith("bf_") else "en-us"
-                    samples, sample_rate = kokoro.create(
-                        text,
-                        voice=DEFAULT_SPEAKER,
-                        speed=speed,
-                        lang=fallback_lang,
+                    samples, sample_rate = synthesize_with_pauses(
+                        text, DEFAULT_SPEAKER, speed, fallback_lang, sentence_pause_ms, comma_pause_ms
                     )
             wav = build_wav(samples, sample_rate)
         except Exception as e:

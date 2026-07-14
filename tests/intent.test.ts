@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test";
-import { classifyTurnIntent } from "../src/agent/intent.ts";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { classifyTurnIntent, heuristicTurnIntent } from "../src/agent/intent.ts";
+import { setIntentModel } from "../src/agent/intent_model.ts";
 import type { Objective, Task } from "../src/agent/tasks.ts";
+
+// Tests exercise the offline heuristic fallback unless a test installs its
+// own stub — never a live model server.
+beforeEach(() => setIntentModel(null));
 
 const staleObjective: Objective = {
   content: "Create Desktop/test folder, scaffold a Next.js project with latest shadcn/ui, install AI chat components, and replace page.tsx with a ChatGPT-like chatbot UI.",
@@ -12,14 +17,17 @@ const staleTasks: Task[] = [
   { content: "Install new chat components", status: "pending" },
 ];
 
+const noState = { objective: null, tasks: [] };
+
 describe("turn intent routing", () => {
-  test("content containing hello is not mistaken for a greeting", () => {
-    const got = classifyTurnIntent("Create a file called hello.txt containing the text 'Hello Sophie'.", { objective: null, tasks: [] });
+  test("content containing hello is not mistaken for a greeting", async () => {
+    const got = await classifyTurnIntent("Create a file called hello.txt containing the text 'Hello Sophie'.", noState);
     expect(got.requiresAction).toBe(true);
     expect(got.expectedTools).toContain("write_file");
   });
-  test("quick Desktop folder check resets stale project work", () => {
-    const intent = classifyTurnIntent("is there a folder called test on yhe desktop", {
+
+  test("quick Desktop folder check resets stale project work", async () => {
+    const intent = await classifyTurnIntent("is there a folder called test on yhe desktop", {
       objective: staleObjective,
       tasks: staleTasks,
     });
@@ -28,8 +36,8 @@ describe("turn intent routing", () => {
     expect(intent.resetReason).toContain("standalone local action");
   });
 
-  test("delete folder is standalone action and resets stale project work", () => {
-    const intent = classifyTurnIntent("please delete the folder called test in the desktop", {
+  test("delete folder is standalone action and resets stale project work", async () => {
+    const intent = await classifyTurnIntent("please delete the folder called test in the desktop", {
       objective: staleObjective,
       tasks: staleTasks,
     });
@@ -38,8 +46,8 @@ describe("turn intent routing", () => {
     expect(intent.resetReason).toContain("standalone local action");
   });
 
-  test("fresh app build does not inherit unrelated active objective", () => {
-    const intent = classifyTurnIntent("build a one page Next.js app with shadcn", {
+  test("fresh app build does not inherit unrelated active objective", async () => {
+    const intent = await classifyTurnIntent("build a one page Next.js app with shadcn", {
       objective: staleObjective,
       tasks: staleTasks,
     });
@@ -48,27 +56,21 @@ describe("turn intent routing", () => {
     expect(intent.resetReason).toContain("fresh complex objective");
   });
 
-  test("focused coding fix is a standalone action without a task ledger", () => {
-    const intent = classifyTurnIntent("fix the typo in src/app/page.tsx", noState);
+  test("focused coding fix is a standalone action without a task ledger", async () => {
+    const intent = await classifyTurnIntent("fix the typo in src/app/page.tsx", noState);
     expect(intent.kind).toBe("standalone_action");
     expect(intent.requiresAction).toBe(true);
     expect(intent.shouldTrackTasks).toBe(false);
   });
 
-  test("multiple requested actions use a task ledger", () => {
-    const intent = classifyTurnIntent("fix the web app connection issue and add a delete button for conversations", noState);
+  test("multiple requested actions use a task ledger", async () => {
+    const intent = await classifyTurnIntent("fix the web app connection issue and add a delete button for conversations", noState);
     expect(intent.kind).toBe("new_job");
     expect(intent.shouldTrackTasks).toBe(true);
   });
 
-  test("multi-step jobs retain concrete tool hints", () => {
-    const intent = classifyTurnIntent("Check today's calendar, unread email, and recent messages, then build a practical workday plan.", { objective: null, tasks: [] });
-    expect(intent.kind).toBe("new_job");
-    expect(intent.expectedTools).toEqual(expect.arrayContaining(["calendar_list", "email", "apple"]));
-  });
-
-  test("explicit continue keeps old work", () => {
-    const intent = classifyTurnIntent("continue where you left off", {
+  test("explicit continue keeps old work", async () => {
+    const intent = await classifyTurnIntent("continue where you left off", {
       objective: staleObjective,
       tasks: staleTasks,
     });
@@ -77,8 +79,8 @@ describe("turn intent routing", () => {
     expect(intent.resetReason).toBeUndefined();
   });
 
-  test("correction resets stale work without starting a job", () => {
-    const intent = classifyTurnIntent("what? thats not what i asked for", {
+  test("correction resets stale work without starting a job", async () => {
+    const intent = await classifyTurnIntent("what? thats not what i asked for", {
       objective: staleObjective,
       tasks: staleTasks,
     });
@@ -88,20 +90,89 @@ describe("turn intent routing", () => {
   });
 });
 
-const noState = { objective: null, tasks: [] };
+describe("model-backed classification", () => {
+  test("a valid model classification supplies kind, tools, and outcomes", async () => {
+    setIntentModel(async () => ({
+      kind: "standalone_action",
+      expectedTools: ["email", "calendar_list"],
+      requiredOutcomes: [{ prefix: "schedule:add", minimum: 1, instruction: "create the requested reminder with schedule(action:'add')" }],
+    }));
+    const intent = await classifyTurnIntent("Look over my mail and my day, and set that dentist reminder.", noState);
+    expect(intent.kind).toBe("standalone_action");
+    expect(intent.expectedTools).toEqual(["email", "calendar_list"]);
+    expect(intent.requiredOutcomes?.map((r) => r.prefix)).toEqual(["schedule:add"]);
+    expect(intent.shouldTrackTasks).toBe(false);
+  });
+
+  test("a conversational label cannot suppress a semantically selected live source", async () => {
+    setIntentModel(async () => ({ kind: "chat", expectedTools: ["web_search"], requiredOutcomes: [] }));
+    const got = await classifyTurnIntent("Look up a current safety guide and explain it simply.", noState);
+    expect(got.kind).toBe("chat");
+    expect(got.requiresAction).toBe(true);
+  });
+
+  test("multi-step personal operations use semantic contracts instead of a software task ledger", async () => {
+    setIntentModel(async () => ({
+      kind: "new_job",
+      expectedTools: ["projects", "manage_tasks", "calendar"],
+      requiredOutcomes: [
+        { prefix: "projects:add", minimum: 1, instruction: "add a project" },
+        { prefix: "manage_tasks:add", minimum: 3, instruction: "add tasks" },
+      ],
+    }));
+    const got = await classifyTurnIntent("Set up my application tracker and follow-up tasks.", noState);
+    expect(got.kind).toBe("new_job");
+    expect(got.shouldTrackTasks).toBe(false);
+  });
+
+  test("explicitly contracted research and file delivery do not add a second task ledger", async () => {
+    setIntentModel(async () => ({
+      kind: "new_job",
+      expectedTools: ["web_search", "write_file"],
+      requiredOutcomes: [
+        { prefix: "web_search", minimum: 1, instruction: "research" },
+        { prefix: "write_file", minimum: 1, instruction: "write file" },
+      ],
+    }));
+    const got = await classifyTurnIntent("Research interview stories and create a worksheet file.", noState);
+    expect(got.shouldTrackTasks).toBe(false);
+  });
+
+  test("a failed model call falls back to generic heuristics", async () => {
+    setIntentModel(async () => null);
+    const intent = await classifyTurnIntent("What is 18% of 249.99?", noState);
+    expect(intent.expectedTools).toContain("calc");
+  });
+
+  test("fast-path shapes never call the model", async () => {
+    let called = false;
+    setIntentModel(async () => {
+      called = true;
+      return null;
+    });
+    expect((await classifyTurnIntent("hey!", noState)).kind).toBe("chat");
+    expect((await classifyTurnIntent("continue where you left off", noState)).kind).toBe("continue_job");
+    expect(called).toBe(false);
+  });
+
+  test("model reset reasons still apply over stale open work", async () => {
+    setIntentModel(async () => ({ kind: "standalone_action", expectedTools: ["weather"], requiredOutcomes: [] }));
+    const intent = await classifyTurnIntent("what's the weather like", { objective: staleObjective, tasks: staleTasks });
+    expect(intent.resetReason).toContain("standalone local action");
+  });
+});
 
 describe("intent confidence gating", () => {
   test("a concrete quick check is high-confidence and restricts tools", () => {
-    const intent = classifyTurnIntent("what is in /tmp/demo/test", noState);
+    const intent = heuristicTurnIntent("what is in /tmp/demo/test");
     expect(intent.kind).toBe("quick_check");
     expect(intent.confidence).toBeGreaterThanOrEqual(0.7);
     expect(intent.restrictTools).toBe(true);
   });
 
   test("a vague quick check is low-confidence and does NOT restrict tools", () => {
-    const intent = classifyTurnIntent(
+    const intent = heuristicTurnIntent(
       "can you check what the current state of the project is and which parts look most relevant to what i mentioned",
-      noState,
     );
     expect(intent.kind).toBe("quick_check");
     expect(intent.confidence).toBeLessThan(0.7);
@@ -109,22 +180,19 @@ describe("intent confidence gating", () => {
   });
 
   test("non-restrictive kinds never restrict tools", () => {
-    const action = classifyTurnIntent("please delete the folder called test in the desktop", noState);
+    const action = heuristicTurnIntent("please delete the folder called test in the desktop");
     expect(action.kind).toBe("standalone_action");
     expect(action.restrictTools).toBe(false);
 
-    const chat = classifyTurnIntent("explain how a hashmap works", noState);
+    const chat = heuristicTurnIntent("explain how a hashmap works");
     expect(chat.restrictTools).toBe(false);
   });
 
-  test("local-world facts are action turns with concrete tool hints", () => {
-    expect(classifyTurnIntent("What is today's date and day of the week?", noState).expectedTools).toContain("current_time");
-    expect(classifyTurnIntent("What operating system and shell am I running?", noState).expectedTools).toContain("system_info");
-    expect(classifyTurnIntent("What is 18% of 249.99?", noState).expectedTools).toContain("calc");
-    expect(classifyTurnIntent("Remember that I prefer concise answers.", noState).expectedTools).toContain("remember");
-    expect(classifyTurnIntent("Book me a flight, but ask me for destination first.", noState).expectedTools).toContain("ask_user");
-    expect(classifyTurnIntent("Review my unread email and recent messages.", noState).expectedTools).toEqual(expect.arrayContaining(["email", "apple"]));
-    expect(classifyTurnIntent("Find a conflict-free meeting slot.", noState).expectedTools).toContain("calendar_find_free");
-    expect(classifyTurnIntent("Create a Carter project, add Jamie as stakeholder, and add a high-priority task.", noState).expectedTools).toEqual(expect.arrayContaining(["people", "projects", "manage_tasks"]));
+  test("local-world facts get generic tool hints without a model", () => {
+    expect(heuristicTurnIntent("What is today's date and day of the week?").expectedTools).toContain("current_time");
+    expect(heuristicTurnIntent("What operating system and shell am I running?").expectedTools).toContain("system_info");
+    expect(heuristicTurnIntent("What is 18% of 249.99?").expectedTools).toContain("calc");
+    expect(heuristicTurnIntent("Remember that I prefer concise answers.").expectedTools).toContain("remember");
+    expect(heuristicTurnIntent("What scheduled jobs or reminders do I currently have?").expectedTools).toContain("schedule_list");
   });
 });

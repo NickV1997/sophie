@@ -88,8 +88,7 @@ async function syncMirrors(
  * (in_minutes / in_hours) or an absolute time: ISO 8601, "YYYY-MM-DD HH:MM", or
  * a bare "HH:MM" (next occurrence today or tomorrow). Returns epoch ms or null.
  */
-function resolveOnceTime(args: Record<string, any>): number | null {
-  const now = Date.now();
+export function resolveOnceTime(args: Record<string, any>, now = Date.now()): number | null {
   if (args.in_minutes != null && Number.isFinite(Number(args.in_minutes))) {
     return now + Math.max(0, Number(args.in_minutes)) * 60_000;
   }
@@ -99,10 +98,30 @@ function resolveOnceTime(args: Record<string, any>): number | null {
   const at = typeof args.at === "string" ? args.at.trim() : "";
   if (!at) return null;
 
+  // Natural weekday time, e.g. "Thursday at 6 PM". Keeping the user's
+  // wording intact is safer than asking a small model to invent an ISO date.
+  const weekday = /^(?:next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i.exec(at);
+  if (weekday) {
+    const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const targetDay = weekdays.indexOf(weekday[1]!.toLowerCase());
+    let hour = Number(weekday[2]);
+    const minute = Number(weekday[3] ?? 0);
+    const meridiem = weekday[4]?.toLowerCase();
+    if (minute > 59 || hour > (meridiem ? 12 : 23) || hour < 0) return null;
+    if (meridiem === "pm" && hour < 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+    const d = new Date(now);
+    const daysAhead = (targetDay - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + daysAhead);
+    d.setHours(hour, minute, 0, 0);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 7);
+    return d.getTime();
+  }
+
   // Bare HH:MM → next occurrence.
   const hm = at.match(/^(\d{1,2}):(\d{2})$/);
   if (hm) {
-    const d = new Date();
+    const d = new Date(now);
     d.setHours(Number(hm[1]), Number(hm[2]), 0, 0);
     if (d.getTime() <= now) d.setDate(d.getDate() + 1);
     return d.getTime();
@@ -139,7 +158,7 @@ export const schedule: Tool = {
       prompt: { type: "string", description: "Instruction for Sophie to carry out when do='run'." },
       in_minutes: { type: "number", description: "One-off: fire this many minutes from now." },
       in_hours: { type: "number", description: "One-off: fire this many hours from now." },
-      at: { type: "string", description: "One-off absolute time: ISO, 'YYYY-MM-DD HH:MM', or 'HH:MM' (next occurrence)." },
+      at: { type: "string", description: "One-off time: ISO, 'YYYY-MM-DD HH:MM', 'HH:MM', or natural weekday time like 'Thursday at 6 PM'. Preserve the user's wording when possible." },
       cron: { type: "string", description: "Recurring 5-field cron, e.g. '0 9 * * 1-5' = weekdays 9am." },
       voice: { type: "boolean", description: "Deprecated/no-op. Audible speech is only available through the speak tool." },
       id: { type: "string", description: "Target id for update/cancel/enable/disable." },

@@ -33,13 +33,23 @@ const PLAN_EXAMPLE = `# Worked example (format reference only — a different co
 assistant: <tool_call>{"name":"update_tasks","arguments":{"objective":"Build a working pomodoro timer web app","tasks":[{"content":"Scaffold the Next.js app","status":"in_progress","phase":"Phase 1: Scaffold"},{"content":"Build the timer screen with start/pause/reset","status":"pending","phase":"Phase 2: Core"},{"content":"Wire session/break cycling and a completed-count","status":"pending","phase":"Phase 3: Integration"},{"content":"Run verify_next_app and browser_check; fix everything it reports","status":"pending","phase":"Phase 4: Verify"}]}}</tool_call>
 (Objective + small verifiable steps grouped by phase, first task in_progress, ends with an explicit verify step. Then start executing immediately.)`;
 
+const PERSONAL_BATCH_EXAMPLE = `# Worked example (format reference only — a different conversation)
+user: Create projects for Acme and Birch, save Kim and Lee as stakeholders, and add the kickoff and report tasks.
+assistant: <tool_call>{"name":"projects","arguments":{"action":"add","projects":[{"name":"Acme","stakeholders":["Kim"]},{"name":"Birch","stakeholders":["Lee"]}]}}</tool_call>
+assistant: <tool_call>{"name":"people","arguments":{"action":"upsert","people":[{"name":"Kim","role":"stakeholder"},{"name":"Lee","role":"stakeholder"}]}}</tool_call>
+assistant: <tool_call>{"name":"manage_tasks","arguments":{"action":"add","tasks":[{"title":"Acme kickoff","project":"Acme"},{"title":"Birch report","project":"Birch"}]}}</tool_call>
+(Use one validated batch call per record type. Do not create files or an internal task ledger for personal-assistant records.)`;
+
 /** Pick the one example (or none) worth its tokens for this turn. */
 export function fewShotForTurn(intent: TurnIntent, mode: string): string {
   if (mode === "build") return EDIT_EXAMPLE;
   if (mode === "plan") return PLAN_EXAMPLE;
+  if (intent.expectedTools?.some((name) => ["projects", "people", "manage_tasks"].includes(name)) && intent.kind !== "quick_check") {
+    return PERSONAL_BATCH_EXAMPLE;
+  }
   if (intent.kind === "quick_check" || intent.kind === "standalone_action" || intent.kind === "session_query") {
     return QUICK_CHECK_EXAMPLE;
   }
-  if (intent.kind === "new_job" || intent.kind === "continue_job") return EDIT_EXAMPLE;
+  if (intent.kind === "new_job" || intent.kind === "continue_job") return "";
   return ""; // chat / correction — no tool example needed
 }

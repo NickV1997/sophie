@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { platform } from "node:os";
 import { extname } from "node:path";
 import { resolvePath } from "../system/paths.ts";
+import { isSensitivePathLike } from "../system/sensitive-data.ts";
 import type { Tool, ToolResult } from "./types.ts";
 
 /**
@@ -116,7 +117,7 @@ export const readDocument: Tool = {
     required: ["path"],
   },
   summarize: (a) => `read ${a.path}`,
-  risk: () => "safe",
+  risk: (a) => isSensitivePathLike(a.path) ? "caution" : "safe",
   async execute(args, ctx) {
     const path = resolvePath(ctx.cwd, String(args.path ?? ""));
     if (!existsSync(path)) return { content: `File not found: ${path}`, isError: true };

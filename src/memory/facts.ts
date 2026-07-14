@@ -277,6 +277,78 @@ export function reinforceMemories(ids: Iterable<string>, cwd: string): void {
   }
 }
 
+/** Rewrite one keyword fact's text in place (webapp memory page edit). */
+export function updateFactMemory(id: string, text: string, cwd: string): MemoryRecord | null {
+  const clean = text.replace(/\s+/g, " ").trim();
+  const keys = tokenize(clean);
+  if (keys.length < 2 || clean.length < 8) return null;
+  for (const scope of ["user", "project"] as MemoryScope[]) {
+    const records = readStore(scope, cwd);
+    const idx = records.findIndex((r) => r.id === id);
+    if (idx < 0) continue;
+    const updated: MemoryRecord = { ...records[idx]!, text: clean, keys: keys.slice(0, 24), lastUsedAt: Date.now() };
+    records[idx] = updated;
+    writeStore(scope, cwd, records);
+    return updated;
+  }
+  return null;
+}
+
+/** Remove one keyword fact by id (webapp memory page delete). */
+export function deleteFactMemory(id: string, cwd: string): boolean {
+  for (const scope of ["user", "project"] as MemoryScope[]) {
+    const records = readStore(scope, cwd);
+    const next = records.filter((r) => r.id !== id);
+    if (next.length !== records.length) {
+      writeStore(scope, cwd, next);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Dream-pass compaction: fold near-duplicate facts that accumulated as
+ * phrasings drifted (save-time dedup only compares against one snapshot), and
+ * drop records with no keys (they can never be retrieved). Returns how many
+ * records were removed by folding.
+ */
+export function compactFactStore(cwd: string): number {
+  ensureMigrated();
+  let removed = 0;
+  for (const scope of ["user", "project"] as MemoryScope[]) {
+    const records = readStore(scope, cwd);
+    if (records.length < 2) continue;
+    const out: MemoryRecord[] = [];
+    for (const rec of records) {
+      if (!rec.keys.length) {
+        removed++;
+        continue;
+      }
+      const twin = out.find((r) => jaccard(r.keys, rec.keys) >= 0.6);
+      if (!twin) {
+        out.push(rec);
+        continue;
+      }
+      removed++;
+      // Keep the more-reinforced phrasing; fold the other's history in.
+      const winner = twin.useCount !== rec.useCount ? (twin.useCount > rec.useCount ? twin : rec) : twin.lastUsedAt >= rec.lastUsedAt ? twin : rec;
+      const merged: MemoryRecord = {
+        ...winner,
+        keys: [...new Set([...twin.keys, ...rec.keys])].slice(0, 24),
+        slot: twin.slot ?? rec.slot,
+        salience: Math.max(twin.salience, rec.salience),
+        useCount: twin.useCount + rec.useCount,
+        createdAt: Math.min(twin.createdAt, rec.createdAt),
+        lastUsedAt: Math.max(twin.lastUsedAt, rec.lastUsedAt),
+      };
+      out[out.indexOf(twin)] = merged;
+    }
+    if (out.length !== records.length) writeStore(scope, cwd, out);
+  }
+  return removed;
+}
+
 // ── one-time migration from the legacy flat SOPHIE.md fact list ────────────────
 
 function migratedMarker(): string {

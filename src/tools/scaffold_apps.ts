@@ -124,7 +124,7 @@ export const scaffoldPythonProject: Tool = {
     required: ["path"],
   },
   summarize: (a) => `scaffold python at ${a.path}`,
-  risk: () => "safe",
+  risk: () => "caution",
   async execute(args, ctx) {
     const { root, error } = assertProjectPath(ctx.cwd, args.path);
     if (!root) return { content: error ?? "Invalid path.", isError: true };
@@ -280,7 +280,7 @@ export const scaffoldNextShadcnProject: Tool = {
     required: ["path"],
   } as any,
   summarize: (a) => `scaffold next+shadcn at ${a.path}`,
-  risk: () => "safe",
+  risk: () => "caution",
   async execute(args, ctx) {
     const { root, error } = assertProjectPath(ctx.cwd, args.path);
     if (!root) return { content: error ?? "Invalid path.", isError: true };
@@ -329,8 +329,8 @@ export const scaffoldNextShadcnProject: Tool = {
         `- \`lib/utils.ts\` — the \`cn()\` helper\n\n` +
         `## Components installed\n${requested.map((c) => `- ${c}`).join("\n")}\n\n` +
         `## Conventions\n` +
-        `- Add more shadcn components with the mcp__shadcn__* tools (browse/search the live registry), ` +
-        `or \`${pm} dlx shadcn@latest add <name>\`. Don't hand-write components that exist in the registry.\n` +
+        `- Add more shadcn components with add_ui_component; when a trusted shadcn MCP server is configured, browse/search it first. ` +
+        `Don't hand-write components that exist in the registry.\n` +
         `- Reuse existing \`components/ui\` parts and the \`cn()\` helper; keep Tailwind classes consistent with what's there.\n\n` +
         `## Run & verify\n` +
         `- Dev: \`${pm} run dev\` (port 3000) — start with run_background, not bash.\n` +

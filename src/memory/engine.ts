@@ -3,6 +3,7 @@ import { estimateTokens } from "../agent/context.ts";
 import { getCurrentJob, getJournal, getObjective } from "../agent/tasks.ts";
 import { addMemory, listMemories, tokenize, type MemoryRecord } from "./facts.ts";
 import { MAX_CAPSULE_CHARS, MAX_FULL_CHARS, capsuleFrom, newEngineMemoryId, oneLine, readEngineStore, writeEngineStore } from "./engine_store.ts";
+import { recordObservation } from "./observations.ts";
 
 export type EngineMemoryKind =
   | "user"
@@ -275,41 +276,111 @@ function reinforceEngineMemories(ids: string[], cwd: string): void {
   }
 }
 
+/**
+ * Rewrite one memory's text in place (the webapp memory page edit). The human
+ * is the highest authority: the edit re-derives capsule/keys from the new text,
+ * marks the record user-sourced, and lifts confidence. Returns null when the
+ * id is unknown or the new text is too vague to ever retrieve.
+ */
+export function updateEngineMemory(id: string, text: string, cwd: string): EngineMemory | null {
+  const full = oneLine(text, MAX_FULL_CHARS);
+  const capsule = capsuleFrom(full);
+  const keys = [...new Set([...tokenize(capsule), ...tokenize(full)])].slice(0, 40);
+  if (keys.length < 2 || capsule.length < 8) return null;
+  for (const scope of ["global", "project"] as EngineMemoryScope[]) {
+    const records = readEngineStore(scope, cwd);
+    const idx = records.findIndex((r) => r.id === id);
+    if (idx < 0) continue;
+    const prev = records[idx]!;
+    const updated: EngineMemory = {
+      ...prev,
+      capsule,
+      full,
+      // Replace (don't union) keys: the memory now says the NEW thing, and
+      // stale keys would keep recalling it for the old topic.
+      keys: [...new Set([...keys, ...prev.tags.flatMap(tokenize)])].slice(0, 40),
+      source: "user",
+      confidence: Math.max(prev.confidence, 0.9),
+      evidence: "edited by the user on the memory page",
+      lastUsedAt: Date.now(),
+    };
+    records[idx] = updated;
+    writeEngineStore(scope, cwd, records);
+    return updated;
+  }
+  return null;
+}
+
+/** Remove one memory by id (the webapp memory page delete). */
+export function deleteEngineMemory(id: string, cwd: string): boolean {
+  for (const scope of ["global", "project"] as EngineMemoryScope[]) {
+    const records = readEngineStore(scope, cwd);
+    const next = records.filter((r) => r.id !== id);
+    if (next.length !== records.length) {
+      writeEngineStore(scope, cwd, next);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Split a message into rough sentences for per-sentence preference capture. */
+function sentencesOf(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 12);
+}
+
+/**
+ * Durable-preference phrasing, topic-agnostic. We only auto-save when the user
+ * SIGNALS durability ("always", "from now on", "I prefer", "I don't want ...")
+ * — momentary task talk ("I want you to fix this bug") stays out of memory.
+ * Everything subtler is left to the batched extraction pass (extraction.ts),
+ * where a model call proposes candidates and the runtime gates them.
+ */
+function isDurablePreference(sentence: string): boolean {
+  if (/\?$/.test(sentence) || /^(?:what|which|when|where|why|how|do|does|did|can|could|would|should|is|are)\b/i.test(sentence)) return false;
+  if (/\b(right now|today|this time|for now|just this once|yet)\b/i.test(sentence)) return false;
+  return (
+    /\b(from now on|going forward|in the future|always|never|every time|whenever)\b/i.test(sentence) ||
+    /\bi(?:'d| would)? (?:really )?(?:rather|prefer)\b/i.test(sentence) ||
+    /\bi (?:don'?t|do not|never) (?:want|wanna|like|need)\b/i.test(sentence)
+  );
+}
+
 export function observeUserInputForMemory(input: string, cwd: string): void {
   const text = input.replace(/\s+/g, " ").trim();
   if (!text) return;
-  const mentionsMcp = /\bMCP\b/i.test(text);
-  const builtInPreference =
-    mentionsMcp &&
-    (/\b(don'?t|dont|do not)\b.{0,60}\b(add|use|install)\b/i.test(text) ||
-      /\b(built[- ]in|native)\b.{0,30}\btools?\b/i.test(text) ||
-      /\btools?\b.{0,30}\b(built[- ]in|native)\b/i.test(text));
-  if (builtInPreference) {
-    saveEngineMemory({
-      kind: "preference",
-      scope: "global",
-      capsule: "User prefers built-in Sophie tools over adding MCP integrations.",
-      full: "The user prefers improving Sophie's built-in tools instead of adding MCP integrations.",
-      evidence: oneLine(text, 260),
-      source: "user",
-      confidence: 0.95,
-      utility: 0.85,
-      tags: ["mcp", "tools", "preference"],
-    }, cwd);
+  const sentences = sentencesOf(text).slice(0, 6);
+  for (let index = 0; index < sentences.length; index++) {
+    const sentence = sentences[index]!;
+    if (!isDurablePreference(sentence)) continue;
+    // A durable negative and its immediately following positive alternative are
+    // one preference ("I don't want X. I want Y."); keep both facts together.
+    const next = sentences[index + 1];
+    const preference = next && /^i (?:really )?(?:want|prefer|would rather)\b/i.test(next) && !/\b(right now|today|this time|for now|just this once)\b/i.test(next)
+      ? `${sentence} ${next}`
+      : sentence;
+    if (preference !== sentence) index++;
+    if (tokenize(preference).length < 3) continue; // too vague to ever retrieve
+    try {
+      saveEngineMemory({
+        kind: "preference",
+        scope: "global",
+        capsule: oneLine(preference, MAX_CAPSULE_CHARS),
+        full: preference,
+        evidence: oneLine(text, 260),
+        source: "user",
+        confidence: 0.85,
+        utility: 0.75,
+        tags: ["preference"],
+      }, cwd);
+    } catch {
+      /* "too vague to save" — fine, the extraction pass may still distill it */
+    }
   }
-  if (/\bmemory engine\b|\bmemory system\b/i.test(text) && /\bcontext\b|\bbloat\b|\befficient\b/i.test(text)) {
-    saveEngineMemory({
-      kind: "sophie",
-      scope: "project",
-      capsule: "Memory must be runtime-ranked, capsule-sized, and context-budgeted; the LLM should not manage bulk memory.",
-      full: "For Sophie memory work, the runtime must do extraction/ranking/budgeting and inject only useful compact capsules so memory helps rather than bloats context.",
-      evidence: oneLine(text, 260),
-      source: "user",
-      confidence: 0.9,
-      utility: 0.9,
-      tags: ["memory", "context", "runtime"],
-    }, cwd);
-  }
+  // Concrete environment facts are regex-safe: an endpoint is an endpoint.
   const endpoint = text.match(/\b(?:0\.0\.0\.0|127\.0\.0\.1|localhost):\d+\/v1\b/i)?.[0];
   if (endpoint) {
     saveEngineMemory({
@@ -324,15 +395,21 @@ export function observeUserInputForMemory(input: string, cwd: string): void {
       tags: ["runtime", "endpoint"],
     }, cwd);
   }
+  // Everything substantive also lands in the observation buffer for the
+  // batched extraction pass — that's where non-obvious facts get learned.
+  recordObservation(text);
 }
 
 export function handleMemoryIntake(input: string, cwd: string): MemoryIntake | null {
+  const raw = input.trim();
   const text = input.replace(/\s+/g, " ").trim();
   if (!text || /\b(what do you remember|recall|stored memor(y|ies))\b/i.test(text)) return null;
   const isMemoryTurn =
-    /\bremember (?:this|that|the following|project preference|preference)\b/i.test(text) ||
+    /(?:^|[.!?]\s+)(?:please\s+)?remember(?:\s*:\s*|\s+(?:that\b|the following\b|project preference\b|preference\b|this\s*:|(?:my|our)\s+rule\s*:))/i.test(text) ||
     /\bkeep this\b.{0,80}\bin mind\b/i.test(text) ||
-    /\bsave (?:this|that)\b.{0,40}\b(?:memory|preference|fact|note)\b/i.test(text);
+    /\bsave (?:this|that)\b.{0,40}\b(?:memory|preference|fact|note)\b/i.test(text) ||
+    /\bkeep it available for later\b/i.test(text) ||
+    /\bimport this\b.{0,80}\b(?:history|context|record)\b/i.test(text);
   if (!isMemoryTurn) return null;
 
   const saved: MemoryIntake["memories"] = [];
@@ -343,7 +420,7 @@ export function handleMemoryIntake(input: string, cwd: string): MemoryIntake | n
     const type = opts.type ?? (opts.kind === "preference" ? "preference" : opts.kind === "convention" || opts.kind === "procedure" ? "convention" : "fact");
     saveLegacyCompatibleMemory(clean, cwd, { scope: scope === "project" ? "project" : "user", type });
     const kind = opts.kind ?? (type === "preference" ? "preference" : type === "convention" ? "convention" : "fact");
-    const capsule = capsuleFrom(clean);
+    const capsule = opts.tags?.includes("imported-context") ? oneLine(clean, 320) : capsuleFrom(clean);
     saved.push({ capsule, scope, kind });
   };
 
@@ -358,8 +435,25 @@ export function handleMemoryIntake(input: string, cwd: string): MemoryIntake | n
     save(`Operational note: ${body}`, { kind: "sophie", scope: "project", type: "convention", tags: ["operational-note"] });
   }
 
-  const rememberParts = text
-    .replace(/^.*?\bremember(?: this| that| the following| project preference| preference)?\s*:?\s*/i, "")
+  // Structured context imports become precise, independently retrievable
+  // facts. Numbered archive filler is intentionally ignored instead of being
+  // persisted as one enormous, low-value memory.
+  const importedRecords = [...raw.matchAll(/(?:^|\n)\s*(?:\d+\.|Record\s+\d+:)\s*([^\n]+)/gi)]
+    .map((match) => match[1]!.trim())
+    .filter((line) => line.length >= 8 && line.length <= 700)
+    .slice(0, 16);
+  for (const record of importedRecords) {
+    const preference = /\bprefer|preference|never|private|privacy\b/i.test(record);
+    save(record, {
+      kind: preference ? "preference" : "fact",
+      scope: "global",
+      type: preference ? "preference" : "fact",
+      tags: ["imported-context"],
+    });
+  }
+
+  const rememberParts = importedRecords.length ? [] : text
+    .replace(/^.*?\bremember(?: this| that| the following| project preference| preference| (?:my|our) rule)?\s*:?\s*/i, "")
     .split(/\b(?:also remember|and also remember)\b|;\s*/i)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -372,7 +466,7 @@ export function handleMemoryIntake(input: string, cwd: string): MemoryIntake | n
 
   if (!saved.length) return null;
   const unique = new Map(saved.map((m) => [`${m.kind}:${m.scope}:${m.capsule.toLowerCase()}`, m]));
-  const memories = [...unique.values()].slice(0, 6);
+  const memories = [...unique.values()].slice(0, 16);
   return {
     memories,
     summary: `Saved ${memories.length} compact memor${memories.length === 1 ? "y" : "ies"}: ${memories.map((m) => m.capsule).join("; ")}`,
@@ -402,7 +496,8 @@ export function learnFromRuntimeEvidence(cwd: string): void {
   const objective = getObjective();
   const journal = job ? getJournal().filter((j) => j.jobId === job.id) : getJournal().slice(-80);
   const verifierPass = [...journal].reverse().find((j) => j.kind === "verification" && !j.isError);
-  const errors = journal.filter((j) => j.isError);
+  const untrustedTools = new Set(["web_search", "web_fetch", "email", "apple", "read_document", "browser_check", "browser_act", "http_request"]);
+  const errors = journal.filter((j) => j.isError && (!j.tool || (!untrustedTools.has(j.tool) && !j.tool.startsWith("mcp__"))));
   if (job?.status === "completed" && verifierPass) {
     const commands = journal
       .filter((j) => j.tool && ["project_checks", "verify_project", "verify_next_app", "verify_python_project", "verify_static_site", "verify_package_install", "bash"].includes(j.tool))

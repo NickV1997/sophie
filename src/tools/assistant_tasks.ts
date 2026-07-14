@@ -40,6 +40,16 @@ function renderTask(task: AssistantTask): string {
   return `- ${task.id} [${task.status}/${task.priority}] ${task.title}${due}${project}${tagList}${note}`;
 }
 
+function dueWeekdayConflict(due: string | undefined, context: string): string | null {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(due ?? "");
+  if (!iso) return null;
+  const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const mentioned = [...context.toLowerCase().matchAll(/\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/g)].map((m) => m[1]!);
+  if (!mentioned.length) return null;
+  const actual = names[new Date(`${iso[1]}-${iso[2]}-${iso[3]}T12:00:00Z`).getUTCDay()]!;
+  return mentioned.includes(actual) ? null : `Due date ${due} is ${actual}, but the task text says ${[...new Set(mentioned)].join("/")}.`;
+}
+
 export const manageTasks: Tool = {
   name: "manage_tasks",
   description:
@@ -54,6 +64,25 @@ export const manageTasks: Tool = {
         type: "string",
         enum: ["add", "list", "update", "delete", "clear_completed"],
         description: "Operation to perform.",
+      },
+      tasks: {
+        type: "array",
+        description: "For action:add, validate and create several tasks in one call. Prefer this over repeating manage_tasks calls.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            priority: { type: "string", enum: ["low", "normal", "high"] },
+            due: {
+              type: "string",
+              description: "Optional due date/time. Copy the source wording exactly; natural weekdays such as 'Friday' are valid. Never convert a relative weekday to an invented ISO date.",
+            },
+            notes: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            project: { type: "string" },
+          },
+          required: ["title"],
+        },
       },
       id: {
         type: "string",
@@ -75,7 +104,7 @@ export const manageTasks: Tool = {
       },
       due: {
         type: "string",
-        description: "Optional due date/time as a clear string, preferably ISO date like 2026-07-10.",
+        description: "Optional due date/time. Copy the source wording exactly; natural weekdays such as 'Friday' are valid. Use ISO only when the source supplied or a clock tool verified that date.",
       },
       notes: {
         type: "string",
@@ -112,24 +141,29 @@ export const manageTasks: Tool = {
     if (action === "delete") return `delete ${args.id ?? ""}`;
     return action;
   },
-  risk: () => "safe",
+  risk: (args) => ["delete", "clear_completed"].includes(String(args.action)) ? "caution" : "safe",
   async execute(args) {
     const action = String(args.action ?? "list");
 
     if (action === "add") {
-      const title = text(args.title);
-      if (!title) return { content: "Cannot add a task without a title.", isError: true, display: "missing title" };
-      const task = addAssistantTask({
-        title,
-        priority: priority(args.priority),
-        due: text(args.due),
-        notes: text(args.notes),
-        tags: tags(args.tags),
-        project: text(args.project),
-      });
+      const batch = Array.isArray(args.tasks) && args.tasks.length
+        ? args.tasks.slice(0, 20).map((item) => item as Record<string, unknown>)
+        : [args as Record<string, unknown>];
+      const prepared = batch.map((item) => ({
+        title: text(item.title),
+        priority: priority(item.priority),
+        due: text(item.due),
+        notes: text(item.notes),
+        tags: tags(item.tags),
+        project: text(item.project),
+      }));
+      if (prepared.some((item) => !item.title)) return { content: "Every task needs a title; no tasks were added.", isError: true, display: "missing title" };
+      const conflict = prepared.map((item) => dueWeekdayConflict(item.due, `${item.title ?? ""} ${item.notes ?? ""}`)).find(Boolean);
+      if (conflict) return { content: `${conflict} No tasks were added; preserve the source's date/weekday or verify it first.`, isError: true, display: "date conflict" };
+      const added = prepared.map((item) => addAssistantTask({ ...item, title: item.title! }));
       return {
-        content: `Added long-term task in ${displayPath(assistantTasksPath())}:\n${renderTask(task)}`,
-        display: `added ${task.id}`,
+        content: `Added ${added.length} long-term task${added.length === 1 ? "" : "s"} in ${displayPath(assistantTasksPath())}:\n${added.map(renderTask).join("\n")}`,
+        display: `added ${added.length} task${added.length === 1 ? "" : "s"}`,
       };
     }
 

@@ -4,6 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { addJournalEntry } from "../agent/tasks.ts";
 import { browserCheck } from "./browser.ts";
 import type { Tool, ToolResult } from "./types.ts";
+import { sanitizedCommandEnvironment, sandboxedShellCommand, supportsCommandSandbox } from "../system/command-sandbox.ts";
 
 type VerifyStatus = "PASS" | "FAIL" | "BLOCKED";
 
@@ -24,8 +25,11 @@ function result(status: VerifyStatus, evidence: string, next: string[] = []): To
   };
 }
 
-async function run(cmd: string[], cwd: string, signal?: AbortSignal): Promise<{ code: number; text: string }> {
-  const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", signal });
+function shellQuote(value: string): string { return `'${value.replace(/'/g, `'\\''`)}'`; }
+
+async function run(cmd: string[], cwd: string, signal?: AbortSignal, sandboxed = true): Promise<{ code: number; text: string }> {
+  const argv = sandboxed ? sandboxedShellCommand(cmd.map(shellQuote).join(" "), cwd) : cmd;
+  const proc = Bun.spawn(argv, { cwd, env: sanitizedCommandEnvironment(), stdout: "pipe", stderr: "pipe", signal });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -111,12 +115,12 @@ async function waitForHttp(url: string, signal?: AbortSignal): Promise<boolean> 
   return false;
 }
 
-async function runDetected(root: string, kind: string, signal?: AbortSignal): Promise<ToolResult> {
+async function runDetected(root: string, kind: string, signal?: AbortSignal, sandboxed = true): Promise<ToolResult> {
   const cmd = detectCommand(root, kind);
   if (!cmd) {
     return result("BLOCKED", `No ${kind} verifier command found in ${root}`, ["inspect package.json/pyproject.toml", "choose a manual verifier"]);
   }
-  const out = await run(cmd, root, signal);
+  const out = await run(cmd, root, signal, sandboxed);
   const status: VerifyStatus = out.code === 0 ? "PASS" : "FAIL";
   const evidence = `$ ${cmd.join(" ")}\n${out.text || "(no output)"}\n[exit code ${out.code}]`;
   if (status === "PASS") {
@@ -134,15 +138,16 @@ export const verifyProject: Tool = {
     properties: {
       path: { type: "string", description: "Project directory to verify. Defaults to cwd." },
       kind: { type: "string", enum: ["auto", "typecheck", "test", "lint", "build"], description: "Verifier type. Default auto." },
+      allow_unsandboxed: { type: "boolean", description: "Run verifier scripts without the network/write sandbox. Requires explicit approval." },
     },
   },
   summarize: (a) => `verify ${a.kind ?? "auto"} ${a.path ?? "."}`,
-  risk: () => "safe",
+  risk: (a) => a.allow_unsandboxed || !supportsCommandSandbox() ? "caution" : "safe",
   async execute(args, ctx) {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     if (!existsSync(root)) return result("BLOCKED", `Project path does not exist: ${root}`, ["inspect the path"]);
     const kind = String(args.kind ?? "auto");
-    return runDetected(root, kind, ctx.signal);
+    return runDetected(root, kind, ctx.signal, !ctx.approved && !args.allow_unsandboxed);
   },
 };
 
@@ -158,10 +163,11 @@ export const verifyNextApp: Tool = {
       url: { type: "string", description: "Existing URL to browser_check instead of starting a dev server." },
       expected_text: { type: "string", description: "Text expected in the rendered page." },
       inspect_visual: { type: "boolean", description: "browser_check captures and inspects a screenshot with the vision model." },
+      allow_unsandboxed: { type: "boolean", description: "Run build/dev scripts without the network/write sandbox. Required for start_dev and requires approval." },
     },
   },
   summarize: (a) => `verify next ${a.path ?? "."}`,
-  risk: () => "safe",
+  risk: (a) => a.start_dev || a.allow_unsandboxed || !supportsCommandSandbox() ? "caution" : "safe",
   async execute(args, ctx) {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     const pkgPath = join(root, "package.json");
@@ -171,7 +177,7 @@ export const verifyNextApp: Tool = {
       return result("BLOCKED", `package.json in ${root} does not declare next`, ["inspect framework", "use verify_project instead"]);
     }
     if (!pkg.scripts?.build) return result("BLOCKED", "Next.js app has no build script.", ["add or inspect build script"]);
-    const verified = await runDetected(root, "build", ctx.signal);
+    const verified = await runDetected(root, "build", ctx.signal, !ctx.approved && !args.allow_unsandboxed);
     if (verified.isError) return verified;
 
     const url = typeof args.url === "string" && args.url.trim() ? args.url.trim() : "";
@@ -194,7 +200,7 @@ export const verifyNextApp: Tool = {
           cwd: root,
           stdout: "pipe",
           stderr: "pipe",
-          env: { ...process.env, PORT: String(port), NEXT_TELEMETRY_DISABLED: "1" },
+          env: sanitizedCommandEnvironment({ PORT: String(port), NEXT_TELEMETRY_DISABLED: "1" }),
           signal: ctx.signal,
         });
         checkUrl = `http://127.0.0.1:${port}`;
@@ -231,14 +237,15 @@ export const verifyPythonProject: Tool = {
     type: "object",
     properties: {
       path: { type: "string", description: "Python project directory. Defaults to cwd." },
+      allow_unsandboxed: { type: "boolean", description: "Run Python/tests without the network/write sandbox. Requires explicit approval." },
     },
   },
   summarize: (a) => `verify python ${a.path ?? "."}`,
-  risk: () => "safe",
+  risk: (a) => a.allow_unsandboxed || !supportsCommandSandbox() ? "caution" : "safe",
   async execute(args, ctx) {
     const root = abs(ctx.cwd, String(args.path ?? "."));
     if (!existsSync(join(root, "pyproject.toml"))) return result("BLOCKED", `No pyproject.toml found in ${root}`, ["inspect the project path"]);
-    let verified = await runDetected(root, "test", ctx.signal);
+    let verified = await runDetected(root, "test", ctx.signal, !ctx.approved && !args.allow_unsandboxed);
     // Fall back to an import check when pytest is missing OR when pytest ran but
     // collected no tests (exit 5 / "no tests ran"): a project that simply has no
     // tests yet shouldn't be reported as a hard verification failure.
@@ -247,7 +254,7 @@ export const verifyPythonProject: Tool = {
       if (!pkg) return verified;
       const venvPy = join(root, ".venv", "bin", "python");
       const py = existsSync(venvPy) ? venvPy : "python3";
-      const out = await run([py, "-c", `import ${pkg}; print(${pkg}.__name__)`], root, ctx.signal);
+      const out = await run([py, "-c", `import ${pkg}; print(${pkg}.__name__)`], root, ctx.signal, !ctx.approved && !args.allow_unsandboxed);
       const status: VerifyStatus = out.code === 0 ? "PASS" : "FAIL";
       verified = result(status, `$ ${py} -c 'import ${pkg}'\n${out.text || "(no output)"}\n[exit code ${out.code}]`, status === "PASS" ? ["mark objective completed with this evidence"] : ["fix package import", "rerun verifier"]);
     }

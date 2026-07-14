@@ -6,10 +6,39 @@ export interface DeterministicToolCall {
   raw: string;
 }
 
-const DETERMINISTIC_TOOLS = new Set(["current_time", "calc", "system_info", "where_am_i", "weather", "schedule_list", "calendar_list", "email", "apple", "write_file"]);
+/**
+ * Deterministic EXECUTION of routing the intent model already decided.
+ * Nothing here chooses whether a tool is relevant — that judgment lives in
+ * intent classification. This module only builds safe default arguments for
+ * an expected read-type tool (plus exact argument parsing for lossless
+ * operations like calc and write_file) so obvious source reads don't each
+ * cost a full model generation.
+ */
+const DETERMINISTIC_TOOLS = new Set(["current_time", "calc", "system_info", "where_am_i", "weather", "schedule_list", "calendar_list", "email", "apple", "activity", "recall", "manage_tasks", "projects", "people", "delegate", "write_file"]);
 
 export function deterministicToolCallForInput(input: string, intent: TurnIntent): DeterministicToolCall | null {
   return deterministicToolCallForMissingInput(input, intent, new Set());
+}
+
+/** All independently useful deterministic calls still missing for this turn.
+ * The agent can execute these before asking the model, avoiding one expensive
+ * generation per inbox/calendar/weather source. */
+export function deterministicToolCallsForMissingInput(
+  input: string,
+  intent: TurnIntent,
+  alreadySucceeded: ReadonlySet<string>,
+): DeterministicToolCall[] {
+  const pending = new Set(alreadySucceeded);
+  const calls: DeterministicToolCall[] = [];
+  while (calls.length < DETERMINISTIC_TOOLS.size) {
+    const next = deterministicToolCallForMissingInput(input, intent, pending);
+    if (!next || calls.some((item) => item.raw === next.raw)) break;
+    calls.push(next);
+    pending.add(next.name);
+    const action = String(next.arguments.action ?? "").trim();
+    if (action) pending.add(`${next.name}:${action}`);
+  }
+  return calls;
 }
 
 export function deterministicToolCallForMissingInput(
@@ -18,7 +47,9 @@ export function deterministicToolCallForMissingInput(
   alreadySucceeded: ReadonlySet<string>,
 ): DeterministicToolCall | null {
   const text = input.toLowerCase();
-  const expected = intent.expectedTools?.find((tool) => DETERMINISTIC_TOOLS.has(tool) && !alreadySucceeded.has(tool) && deterministicApplicable(tool, text));
+  const expected = intent.expectedTools?.find((tool) =>
+    DETERMINISTIC_TOOLS.has(tool) && deterministicReadStillNeeded(tool, intent, alreadySucceeded)
+  );
   if (!expected) return null;
   if (expected === "calc") return calcCallForInput(input);
   if (expected === "weather") return call("weather", weatherArgsForInput(input));
@@ -26,18 +57,35 @@ export function deterministicToolCallForMissingInput(
   if (expected === "where_am_i") return call("where_am_i", {});
   if (expected === "current_time") return call("current_time", {});
   if (expected === "schedule_list") return call("schedule_list", {});
-  if (expected === "calendar_list") return call("calendar_list", { range: /\btomorrow\b/.test(text) ? "tomorrow" : /\bweek\b/.test(text) ? "week" : "today" });
-  if (expected === "email") return call("email", { action: "list_unread", limit: 20 });
+  if (expected === "calendar_list") {
+    const namedWeekday = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(text);
+    return call("calendar_list", { range: /\btomorrow\b/.test(text) ? "tomorrow" : /\bweek\b/.test(text) || namedWeekday ? "week" : "today" });
+  }
+  if (expected === "email") {
+    const requiredReads = ["email:list_unread", "email:draft_list"]
+      .filter((prefix) => intent.requiredOutcomes?.some((outcome) => outcome.prefix === prefix));
+    const missing = requiredReads.find((prefix) => !alreadySucceeded.has(prefix));
+    if (missing === "email:draft_list") return call("email", { action: "draft_list" });
+    return call("email", { action: "list_unread", limit: 20 });
+  }
   if (expected === "apple") return call("apple", { action: "messages_recent", limit: 20 });
+  if (expected === "activity") return call("activity", { limit: 50, status: "all" });
+  if (expected === "recall") return call("recall", { query: input.slice(-800), limit: 8 });
+  if (expected === "manage_tasks") return call("manage_tasks", { action: "list", status: "all", limit: 50 });
+  if (expected === "projects") return call("projects", { action: "list", status: "all" });
+  if (expected === "people") return call("people", { action: "list" });
+  if (expected === "delegate") return call("delegate", { action: "list" });
   if (expected === "write_file") return writeFileCallForInput(input);
-  if (/\b(today|time|date|day|until|now|right now)\b/.test(text)) return call("current_time", {});
   return null;
 }
 
-function deterministicApplicable(tool: string, text: string): boolean {
-  if (tool === "email") return /\b(unread|inbox|mailbox|check (?:my )?(?:email|mail)|review (?:my )?(?:email|mail)|read (?:my )?(?:email|mail))\b/.test(text);
-  if (tool === "apple") return /\b(recent messages?|check (?:my )?(?:messages|texts)|review (?:my )?(?:messages|texts)|read (?:my )?(?:messages|texts))\b/.test(text);
-  return true;
+function deterministicReadStillNeeded(tool: string, intent: TurnIntent, alreadySucceeded: ReadonlySet<string>): boolean {
+  if (tool !== "email") return !alreadySucceeded.has(tool);
+  const requiredReads = ["email:list_unread", "email:draft_list"]
+    .filter((prefix) => intent.requiredOutcomes?.some((outcome) => outcome.prefix === prefix));
+  return requiredReads.length
+    ? requiredReads.some((prefix) => !alreadySucceeded.has(prefix))
+    : !alreadySucceeded.has(tool);
 }
 
 function writeFileCallForInput(input: string): DeterministicToolCall | null {
@@ -50,9 +98,9 @@ function call(name: string, args: Record<string, unknown>): DeterministicToolCal
   return { name, arguments: args, raw: JSON.stringify({ name, arguments: args }) };
 }
 
+/** Exact argument extraction for common math idioms; anything less explicit
+ *  returns null and the model writes the expression itself. */
 function calcCallForInput(input: string): DeterministicToolCall | null {
-  const text = input.toLowerCase();
-
   const percent = /(\d+(?:\.\d+)?)\s*%\s+of\s+(\d+(?:\.\d+)?)/i.exec(input);
   if (percent) {
     return call("calc", { expression: `${Number(percent[1]) / 100}*${percent[2]}` });
@@ -61,15 +109,6 @@ function calcCallForInput(input: string): DeterministicToolCall | null {
   const fahrenheit = /(-?\d+(?:\.\d+)?)\s*(?:degrees?\s*)?f(?:ahrenheit)?\b/i.exec(input);
   if (fahrenheit && /\bcelsius|centigrade\b/i.test(input)) {
     return call("calc", { expression: `(${fahrenheit[1]}-32)*5/9` });
-  }
-
-  if (/\bseconds?\b.*\bweek\b/.test(text)) {
-    return call("calc", { expression: "7*24*60*60" });
-  }
-
-  const compound = /(?:invest|principal|deposit)\D+(\d+(?:\.\d+)?).+?(\d+(?:\.\d+)?)\s*%.+?(\d+(?:\.\d+)?)\s*years?/i.exec(input);
-  if (compound) {
-    return call("calc", { expression: `${compound[1]}*(1+${Number(compound[2]) / 100})^${compound[3]}` });
   }
 
   if (/\bstandard deviation|stddev|stdev\b/i.test(input)) {

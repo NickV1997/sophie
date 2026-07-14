@@ -160,7 +160,20 @@ export function protectedRuntimePaths(cwd: string): string[] {
 function noTouchPaths(): string[] {
   const out = [...SYSTEM_NO_TOUCH];
   for (const rel of HOME_NO_TOUCH) out.push(join(HOME, rel));
+  out.push(...securityStatePaths());
   return uniq(out).sort((a, b) => a.length - b.length);
+}
+
+/** Authorization/idempotency state is writable only through its owning runtime. */
+function securityStatePaths(): string[] {
+  const base = process.env.SOPHIE_HOME ? join(process.env.SOPHIE_HOME, ".sophie") : join(HOME, ".sophie");
+  return [
+    join(base, "mcp-project-trust.json"),
+    join(base, "daemon", "queue.json"),
+    join(base, "state.sqlite"),
+    join(base, "state.sqlite-wal"),
+    join(base, "state.sqlite-shm"),
+  ];
 }
 
 /** `a` is a strict ancestor directory of `b`. */

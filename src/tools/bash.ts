@@ -2,6 +2,8 @@ import type { RiskLevel, Tool } from "./types.ts";
 import { protectedPathBlockReason } from "../system/protected-paths.ts";
 import { protectedProcessBlockReason } from "../system/protected-processes.ts";
 import { platform } from "node:os";
+import { sanitizedCommandEnvironment, sandboxedShellCommand, supportsCommandSandbox } from "../system/command-sandbox.ts";
+import { isSensitivePathLike } from "../system/sensitive-data.ts";
 
 const MAX_FOREGROUND_MS = 3 * 60 * 1000;
 
@@ -40,6 +42,28 @@ const CATASTROPHIC_PATTERNS: RegExp[] = [
   /\bgit\s+reset\s+--hard\b/i,
   /\bnpm\s+publish\b/i,
 ];
+
+/** External, persistent, or opaque effects that must be shown to the user. */
+const OUTWARD_PATTERNS: RegExp[] = [
+  /\bgit\s+push\b/i,
+  /\bgh\s+(?:pr|issue|release|repo|api)\s+(?:create|edit|delete|merge|close|reopen|fork|archive|transfer)\b/i,
+  /\b(curl|wget|http)\b[\s\S]*(?:-X\s*(?:POST|PUT|DELETE|PATCH)\b|--data(?:-binary)?\b|--upload-file\b|-d(?:\s|=)|-F(?:\s|=)|--post-data\b)/i,
+  /\b(scp|sftp)\b/i,
+  /\brsync\b[\s\S]*(?:[\w.-]+@[^\s:]+:|[^\s]+::)/i,
+  /\bssh\b/i,
+  /\b(mail|mailx|sendmail)\b/i,
+  /\bosascript\b/i,
+  /\b(crontab|launchctl|systemctl\s+(?:enable|disable|start|stop|restart)|brew\s+services)\b/i,
+  /\b(npm|pnpm|yarn|bun)\s+(?:publish|login|logout|owner|access|deprecate|dist-tag)\b/i,
+  /\b(?:npm\s+(?:install|i)|pnpm\s+(?:install|add|dlx)|yarn\s+(?:install|add|dlx)|bun\s+(?:install|add)|npx|bunx)\b/i,
+];
+
+const LOCAL_MUTATION_PATTERNS: RegExp[] = [
+  /(^|\s)\d*(?:>>?|<)\s*[^&]/,
+  /\b(tee|touch|mkdir|cp|chmod|chown|xattr|defaults\s+write)\b/i,
+];
+
+const OPAQUE_INLINE_CODE = /\b(python3?|node|bun|deno|ruby|perl|php)\b[\s\S]*\s(?:-c|-e|--eval)\b/i;
 
 const LONG_LIVED_PATTERNS: RegExp[] = [
   /\b(npm|pnpm|yarn|bun)\s+(run\s+)?dev\b/i,
@@ -130,7 +154,14 @@ export function classifyCommand(cmd: string): RiskLevel {
   if (DELETE_MOVE_PATTERNS.some((re) => re.test(c))) return "caution";
   // A find that deletes or shells out to a mutating command needs a look.
   if (FIND_SIDE_EFFECT.test(c)) return "caution";
-  // Everything else — edit, build, run, install, git — runs without prompting.
+  if (OUTWARD_PATTERNS.some((re) => re.test(c))) return "caution";
+  if (LOCAL_MUTATION_PATTERNS.some((re) => re.test(c))) return "caution";
+  if (OPAQUE_INLINE_CODE.test(c)) return "caution";
+  if (isSensitivePathLike(c) || /(?:^|\s)(?:\.env(?:\.[^\s/]+)?|~?\/[^\s]*(?:\.ssh|\.gnupg|\.aws|\.kube|keychains?|credentials?|secrets?)(?:\/|\s|$))|\bsecurity\s+find-(?:generic|internet)-password\b/i.test(c)) return "caution";
+  if (longLivedReason(c)) return "caution";
+  // Without an enforceable OS sandbox, arbitrary programs are opaque. Keep a
+  // narrow read-only shell surface automatic and ask for everything else.
+  if (!supportsCommandSandbox() && !/^(?:pwd|ls|stat|file|cat|head|tail|wc|rg|grep|sed\s+-n|find\b(?![\s\S]*-(?:exec|delete))|git\s+(?:status|diff|log|show|branch|rev-parse)\b)/i.test(c)) return "caution";
   return "safe";
 }
 
@@ -153,11 +184,12 @@ export const bash: Tool = {
     properties: {
       command: { type: "string", description: "The shell command to execute." },
       timeout_ms: { type: "number", description: "Timeout in ms (default 180000, capped at 180000)." },
+      allow_unsandboxed: { type: "boolean", description: "Run without Sophie's network/write sandbox. Requires explicit approval." },
     },
     required: ["command"],
   },
   summarize: (a) => a.command,
-  risk: (a) => classifyCommand(a.command ?? ""),
+  risk: (a) => a.allow_unsandboxed ? "caution" : classifyCommand(a.command ?? ""),
   async execute(args, ctx) {
     const command = String(args.command ?? "").trim();
     const processReason = protectedProcessBlockReason(command);
@@ -203,8 +235,10 @@ export const bash: Tool = {
     const normalized = normalizePortableCommand(command);
     const runCommand = normalized.command;
     const timeout = Math.min(args.timeout_ms ?? MAX_FOREGROUND_MS, MAX_FOREGROUND_MS);
-    const proc = Bun.spawn(["bash", "-lc", runCommand], {
+    const sandboxed = !ctx.approved && !args.allow_unsandboxed;
+    const proc = Bun.spawn(sandboxed ? sandboxedShellCommand(runCommand, ctx.cwd) : ["bash", "-lc", runCommand], {
       cwd: ctx.cwd,
+      env: sanitizedCommandEnvironment(),
       stdout: "pipe",
       stderr: "pipe",
       signal: ctx.signal,
@@ -233,6 +267,7 @@ export const bash: Tool = {
       return {
         content:
           `$ ${command}\n` +
+          (sandboxed && supportsCommandSandbox() ? "[runtime sandbox] network denied; writes limited to the working directory and temporary files\n" : "") +
           (normalized.note ? `[runtime portability] ${normalized.note}\n$ ${runCommand}\n` : "") +
           (clipped || "(no output)") +
           (exitCode !== 0 ? `\n[exit code ${exitCode}]` : ""),

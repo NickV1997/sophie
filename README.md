@@ -50,12 +50,18 @@ models including **Qwen, GLM, Gemma, and GPT-OSS**.
 - 🎯 **Facts-only** — Sophie speaks only from verified data (tool results, files,
   the live clock, the web) and refuses to guess.
 - 🧠 **Persistent memory** — a `SOPHIE.md` notebook she reads every session and
-  appends to with the `remember` tool.
+  appends to with the `remember` tool, plus a structured memory engine that
+  learns from your messages and injects only the few facts relevant to each turn.
+- 🌙 **Dream pass** — a ~daily background consolidation (also `sophie dream`)
+  that merges near-duplicate memories, prunes junk, summarizes verbose ones,
+  retires contradicted facts, and mirrors everything Sophie believes into a
+  readable `~/.sophie/memory-report.md`. Disable with `SOPHIE_DREAM=false`.
 - 📌 **Long-term task manager** — durable assistant tasks survive across chats.
 - 📱 **Reach you anywhere** — native desktop notifications, optional Telegram for
   two-way remote contact, and a Tailscale-ready phone web app.
-- 🛡️ **Smart approvals** — acts freely on safe work; stops to ask before
-  destructive actions (`rm -rf`, overwrites, force-push, …).
+- 🛡️ **Smart approvals and command sandboxing** — acts freely on scoped work;
+  stops before destructive, outward, persistent, sensitive, downloaded, or
+  unsandboxed actions. Approval screens show the exact redacted arguments and hash.
 - 🗂️ **Plan / Normal / Build modes** — plan reasons first (read-only), normal
   executes, build is the coding playbook. Toggle with **Shift+Tab**.
 - 🗣️ **Voice** — optional neural TTS (local Kokoro sidecar) or macOS `say`.
@@ -305,7 +311,8 @@ Your `.env` is never overwritten by an update.
 | `~/.sophie/jobs/` | Logs & exit markers for long-running background jobs. |
 | `~/.sophie/backups/` | Automatic pre-edit file backups (for undo). |
 | `~/.sophie/skills/` | **Your personal skills** (see below). |
-| `~/.sophie/mcp.json` | **Your personal MCP servers** (merged with the repo's). |
+| `~/.sophie/mcp.json` | **Your personal MCP servers** (merged with trusted project configs). |
+| `~/.sophie/mcp-project-trust.json` | Content-hash-bound trust grants for project MCP configs. |
 | `~/.sophie/uploads/`, `screenshots/` | Web-app image uploads and captures. |
 
 **Back up / reset.** To back up everything Sophie knows, copy `~/.sophie/`. To start
@@ -395,29 +402,41 @@ disclosure is why Sophie stays sharp with ~60 tools installed but only ~12 in th
 prompt. Keep `description` and `parameters` tight: every tool schema is prompt tokens
 on every round it's disclosed.
 
-**`risk()` is the safety gate.** Return `"safe"` for read-only/reversible work;
-`"caution"` or `"dangerous"` for anything that deletes, overwrites, or affects the
-outside world — those pause for your `y/n` approval. Classify by the *actual*
-arguments (e.g. a `bash` call is safe for `ls`, dangerous for `rm -rf`).
+**`risk()` is the safety gate.** Return `"safe"` only for scoped,
+read-only/reversible work; use `"caution"` or `"dangerous"` for anything that
+deletes, overwrites, downloads or executes opaque code, persists authority, or
+affects the outside world. Those calls pause for `y/n` approval with redacted exact
+arguments and a hash. Runtime provenance can further elevate a nominally safe call
+when it follows private or untrusted evidence.
 
 ### Add an MCP server (external tools)
 
-Sophie speaks [MCP](https://modelcontextprotocol.io), so any MCP server's tools
-become Sophie tools. Add them to [`mcp.json`](mcp.json) (repo-wide) or
-`~/.sophie/mcp.json` (personal):
+Sophie speaks [MCP](https://modelcontextprotocol.io), so trusted MCP servers can
+become Sophie tools. Personal servers go in `~/.sophie/mcp.json`. A project's
+`.mcp.json` or `.sophie/mcp.json` is ignored until you review it and bind trust to
+its current SHA-256 hash with `sophie mcp trust`; changing the file revokes trust.
 
 ```json
 {
   "mcpServers": {
-    "shadcn": { "command": "npx", "args": ["shadcn@latest", "mcp"] },
-    "my-server": { "command": "npx", "args": ["-y", "@me/my-mcp-server"] }
+    "my-reviewed-server": {
+      "command": "/absolute/path/to/pinned-mcp-server",
+      "args": ["serve"],
+      "permissions": { "network": true, "filesystem": "cwd" }
+    }
   }
 }
 ```
 
-Set `"disabled": true` to keep an entry without loading it. MCP tools are deferred
-like any other non-core group — cataloged by name, schemas loaded on activation — so
-adding servers doesn't bloat the base prompt.
+Use `sophie mcp status` or `sophie mcp revoke` to inspect/revoke project trust.
+MCP children receive a minimal environment; credentials must be explicitly supplied
+in that server's `env`. On supported macOS systems they default to no network and
+cwd/temp-only writes; opt into `permissions.network` or `filesystem: "all"` only
+when the reviewed server genuinely needs it. Unknown/mutating MCP tools require
+per-call approval; only tools explicitly annotated read-only run freely. MCP tools
+remain progressively disclosed, so adding servers does not bloat the base prompt.
+Prefer an absolute local executable or an exact package version; do not put
+`@latest` package runners in an automatically loaded personal config.
 
 ### Give her lasting memory & context
 
@@ -470,6 +489,15 @@ Read-only calls run instantly; mutating/destructive calls require your `y/n`
 approval. Plan mode is locked to read-only tools.
 
 ## Real-world benchmark
+
+`bun run bench:personal-assistant` is the multi-hour release benchmark for
+Sophie's core mission. It runs more than 80 sequential, stateful turns across a
+parent, student, teacher, freelancer, caregiver, small-business owner, job
+seeker, older/nontechnical user, limited-hardware user, and privacy-sensitive
+professional. Each persona gets an isolated process and synthetic personal
+world. The gate requires at least 9/10 in every field—not merely on average—plus
+zero false actions or completion claims. See the
+[personal-assistant benchmark guide](src/bench/PERSONAL_ASSISTANT.md).
 
 `bun run bench:real-world` runs 28 stateful interactions across simulated
 founder, business-owner, COO, and technical-founder workweeks through the real

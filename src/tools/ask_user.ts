@@ -9,10 +9,10 @@ import type { Tool } from "./types.ts";
 export const askUser: Tool = {
   name: "ask_user",
   description:
-    "Ask the user a small batch of focused clarifying questions and wait for their answer. " +
-    "Use during build planning to understand exactly what they want before you plan/build — " +
-    "stack, must-have features, scope, look. Ask 1-4 sharp questions at once, only when the answer " +
-    "would actually change the plan; don't ask what you can reasonably decide or infer yourself.",
+    "Ask the user a small batch of focused questions and end the turn to wait for their answer. " +
+    "Use only when the answer changes the action or approval. Ask 1-4 sharp questions at once; don't ask " +
+    "what you can infer. Because this tool's result is the final user-facing response, put any requested " +
+    "evidence-based comparison, conflict, or recommendation in the preamble before the questions.",
   parameters: {
     type: "object",
     properties: {
@@ -23,7 +23,7 @@ export const askUser: Tool = {
       },
       preamble: {
         type: "string",
-        description: "Optional one-line context shown before the questions.",
+        description: "Concise context shown before the questions. Include the relevant evidence and recommendation when the user asked for them.",
       },
     },
     required: ["questions"],

@@ -302,7 +302,11 @@ export const emailTool: Tool = {
     },
     required: ["action"],
   },
-  summarize: (a) => `email ${a.action}${a.uid ? ` ${a.uid}` : a.draft_id ? ` ${a.draft_id}` : ""}`,
+  summarize: (a) => {
+    const target = a.to ? ` → ${String(a.to).slice(0, 80)}` : a.uid ? ` ${a.uid}` : a.draft_id ? ` ${a.draft_id}` : "";
+    const subject = a.subject ? ` · ${String(a.subject).slice(0, 80)}` : "";
+    return `email ${a.action}${target}${subject}`;
+  },
   risk: (a) => ["send", "draft_send", "draft_delete"].includes(String(a.action)) ? "caution" : "safe",
   async execute(args): Promise<ToolResult> {
     const action = String(args.action ?? "");

@@ -135,7 +135,7 @@ describe("verification contract", () => {
       scripts: { typecheck: "node -e \"process.exit(0)\"" },
     }));
 
-    const result = await verifyProject.execute({ path: root, kind: "typecheck" }, { cwd: process.cwd() });
+    const result = await verifyProject.execute({ path: root, kind: "typecheck", allow_unsandboxed: true }, { cwd: process.cwd(), approved: true });
     expect(result.isError).toBe(false);
     expect(result.content).toContain("STATUS: PASS");
     expect(result.content).toContain("NEXT_ALLOWED_ACTIONS:");
@@ -184,7 +184,7 @@ describe("verification contract", () => {
     mkdirSync(`${root}/demo_pkg`, { recursive: true });
     writeFileSync(root + "/pyproject.toml", `[project]\nname = "demo-pkg"\nversion = "0.1.0"\n`);
     writeFileSync(`${root}/demo_pkg/__init__.py`, "");
-    const result = await verifyPythonProject.execute({ path: root }, { cwd: process.cwd() });
+    const result = await verifyPythonProject.execute({ path: root, allow_unsandboxed: true }, { cwd: process.cwd(), approved: true });
     expect(result.content).toContain("STATUS:");
     expect(result.content).toContain("import demo_pkg");
   });

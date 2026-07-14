@@ -3,13 +3,14 @@ import { join } from "node:path";
 import { memoryHomeDir } from "../memory/facts.ts";
 import type { TurnSource } from "../agent/capabilities.ts";
 import { readJsonWithRecovery, writePrivateFileAtomic } from "../system/atomic-file.ts";
+import { approvalArgumentHash } from "../agent/approval.ts";
 
 export type DaemonWorkStatus = "queued" | "running" | "awaiting_approval" | "completed" | "failed" | "dead_letter";
 export interface DaemonWorkItem {
   id: string; source: Extract<TurnSource, "schedule" | "watcher" | "telegram">;
   title: string; prompt: string; status: DaemonWorkStatus; createdAt: number; updatedAt: number;
   attempts: number; result?: string; error?: string;
-  pendingApproval?: { name: string; args: Record<string, unknown>; summary: string; signature: string };
+  pendingApproval?: { name: string; args: Record<string, unknown>; summary: string; details?: string; argumentHash: string; signature: string };
   approvedSignature?: string;
   priority: number; notBefore: number; maxAttempts: number; leaseOwner?: string; leaseUntil?: number;
 }
@@ -22,7 +23,14 @@ function load(): DaemonWorkItem[] {
   const items = Array.isArray(parsed?.items) ? parsed.items : [];
   // A crash during execution makes the item retryable on the next daemon start.
   const now = Date.now();
-  return items.map((x: DaemonWorkItem) => x.status === "running" && (x.leaseUntil ?? 0) <= now ? { ...x, status: "queued" as const, leaseOwner: undefined, leaseUntil: undefined } : x);
+  return items.map((raw: DaemonWorkItem) => {
+    let x = raw;
+    if (x.pendingApproval && !x.pendingApproval.argumentHash) {
+      const argumentHash = approvalArgumentHash(x.pendingApproval.args ?? {});
+      x = { ...x, pendingApproval: { ...x.pendingApproval, argumentHash, signature: `${x.pendingApproval.name}:${argumentHash}` } };
+    }
+    return x.status === "running" && (x.leaseUntil ?? 0) <= now ? { ...x, status: "queued" as const, leaseOwner: undefined, leaseUntil: undefined } : x;
+  });
 }
 function save(items: DaemonWorkItem[]): void { writePrivateFileAtomic(queuePath(), `${JSON.stringify({ schemaVersion: 1, items }, null, 2)}\n`); }
 export function enqueueWork(input: Pick<DaemonWorkItem, "source" | "title" | "prompt"> & Partial<Pick<DaemonWorkItem, "priority" | "notBefore" | "maxAttempts">>): DaemonWorkItem {
@@ -38,9 +46,9 @@ export function updateWork(id: string, patch: Partial<DaemonWorkItem>): DaemonWo
   const items = load(); const i = items.findIndex((x) => x.id === id); if (i < 0) return;
   items[i] = { ...items[i]!, ...patch, id, updatedAt: Date.now() }; save(items); return items[i];
 }
-export function approveWork(id: string): DaemonWorkItem | undefined {
+export function approveWork(id: string, argumentHash: string): DaemonWorkItem | undefined {
   const item = load().find((x) => x.id === id);
-  if (!item?.pendingApproval) return;
+  if (!item?.pendingApproval || !argumentHash || item.pendingApproval.argumentHash !== argumentHash) return;
   return updateWork(id, { status: "queued", approvedSignature: item.pendingApproval.signature, error: undefined });
 }
 export function cancelWork(id: string): DaemonWorkItem | undefined { return updateWork(id, { status: "failed", error: "Cancelled by user", pendingApproval: undefined, approvedSignature: undefined }); }

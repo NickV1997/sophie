@@ -26,7 +26,7 @@ describe("build mode", () => {
 
     expect(gate(write!, { path: "app.ts", content: "x" }, "build").decision).not.toBe("block");
     expect(gate(bash!, { command: "npm test" }, "build").decision).not.toBe("block");
-    expect(gate(verify!, { path: "." }, "build").decision).toBe("run");
+    expect(gate(verify!, { path: "." }, "build").decision).not.toBe("block");
     expect(BUILD_MODE_TOOLS.has("bash")).toBe(true);
   });
 

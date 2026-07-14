@@ -608,6 +608,103 @@
   .hero .sub { margin-top: 14px; color: var(--dim); font-size: 14px; }
   .hero .sub b { color: var(--green); font-weight: 700; }
 
+  /* ---------- memory page ---------- */
+  #memory-page {
+    overflow-y: auto; min-width: 0; min-height: 0;
+    padding: 24px 16px calc(16px + env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+  #memory-page[hidden] { display: none; }
+  .memory-inner { width: 100%; max-width: 980px; min-width: 0; margin: 0 auto; }
+  .mem-head-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .mem-dream-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid rgba(196,181,253,0.4); border-radius: 999px;
+    background: rgba(196,181,253,0.08); color: #c4b5fd;
+    padding: 7px 14px; font-size: 13px; white-space: nowrap;
+  }
+  .mem-dream-btn:hover { background: rgba(196,181,253,0.16); color: #e6defe; }
+  .mem-dream-btn.dreaming { border-color: rgba(196,181,253,0.7); }
+  .mem-dream-btn.dreaming svg { animation: mem-dream-tilt 2.2s ease-in-out infinite; }
+  @keyframes mem-dream-tilt {
+    0%, 100% { transform: rotate(-14deg) scale(1); opacity: 0.85; }
+    50% { transform: rotate(14deg) scale(1.18); opacity: 1; }
+  }
+  .mem-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 12px 0 4px; }
+  .mem-stat {
+    border: 1px solid rgba(255,255,255,0.09); border-radius: 12px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+    padding: 11px 14px;
+  }
+  .mem-stat .n { font-size: 21px; font-weight: 650; font-family: var(--mono); }
+  .mem-stat .l { color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 1px; }
+  .mem-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; }
+  .mem-search {
+    flex: 1 1 200px; min-width: 150px; background: #181816;
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 999px;
+    color: var(--text); padding: 8px 14px; font: inherit; font-size: 13px; outline: none;
+  }
+  .mem-search:focus { border-color: rgba(255,46,166,0.55); }
+  .mem-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mem-chip {
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 999px;
+    color: var(--dim); padding: 5px 11px; font-size: 12px; white-space: nowrap;
+  }
+  .mem-chip:hover { color: var(--soft); background: rgba(255,255,255,0.05); }
+  .mem-chip.active {
+    color: var(--text); border-color: var(--kc, var(--pink));
+    background: rgba(255,255,255,0.08);
+    background: color-mix(in srgb, var(--kc, var(--pink)) 15%, transparent);
+  }
+  .mem-chip .c { font-family: var(--mono); font-size: 10.5px; opacity: 0.7; margin-left: 5px; }
+  .mem-grid { columns: 2 300px; column-gap: 12px; }
+  .mem-card {
+    break-inside: avoid; margin-bottom: 12px;
+    border: 1px solid rgba(255,255,255,0.09); border-left: 3px solid var(--kc, var(--faint));
+    border-radius: 12px; background: rgba(255,255,255,0.03);
+    padding: 12px 14px; cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  }
+  .mem-card:hover { background: rgba(255,255,255,0.055); transform: translateY(-1px); }
+  .mem-card.editing { cursor: default; border-color: var(--kc, var(--pink)); background: rgba(255,255,255,0.05); transform: none; }
+  .mem-card-top { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+  .mem-kind {
+    font-size: 10px; letter-spacing: 0.07em; text-transform: uppercase; font-weight: 650;
+    color: var(--kc, var(--soft));
+  }
+  .mem-scope { font-size: 10px; color: var(--faint); border: 1px solid rgba(255,255,255,0.12); border-radius: 999px; padding: 1px 7px; }
+  .mem-age { margin-left: auto; font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+  .mem-text { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+  .mem-meta { display: flex; align-items: center; gap: 12px; margin-top: 10px; color: var(--faint); font-size: 11px; }
+  .mem-conf { display: inline-flex; align-items: center; gap: 6px; }
+  .mem-conf-track { display: inline-block; width: 44px; height: 4px; border-radius: 999px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .mem-conf-fill { display: block; height: 100%; border-radius: 999px; background: var(--kc, var(--pink)); }
+  .mem-edit-area {
+    width: 100%; min-height: 74px; resize: vertical; background: #181816;
+    border: 1px solid rgba(255,255,255,0.14); border-radius: 8px;
+    color: var(--text); padding: 9px 10px; font: inherit; font-size: 13px; outline: none; margin-top: 2px;
+  }
+  .mem-edit-area:focus { border-color: rgba(255,46,166,0.55); }
+  .mem-edit-actions { display: flex; gap: 8px; margin-top: 9px; }
+  .mem-btn {
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    padding: 7px 13px; font-size: 12.5px; color: var(--soft);
+  }
+  .mem-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+  .mem-save { border-color: rgba(255,46,166,0.5); background: rgba(255,46,166,0.12); color: var(--pink-soft); }
+  .mem-save:hover { background: rgba(255,46,166,0.2); color: var(--text); }
+  .mem-delete { border-color: rgba(255,46,93,0.4); color: var(--error); margin-left: auto; }
+  .mem-delete:hover { background: rgba(255,46,93,0.12); color: var(--error); }
+  .mem-empty { color: var(--dim); font-size: 13.5px; padding: 26px 4px; text-align: center; }
+  .kind-user { --kc: #7dd3fc; }
+  .kind-preference { --kc: #ff2ea6; }
+  .kind-environment { --kc: #fbbf24; }
+  .kind-sophie { --kc: #c4b5fd; }
+  .kind-procedure { --kc: #39ff14; }
+  .kind-failure { --kc: #ff2e5d; }
+  .kind-convention { --kc: #34d399; }
+  .kind-fact { --kc: #9b9b94; }
+
   /* ---------- approval ---------- */
   #approval {
     max-width: 860px; margin: 0 auto 10px; width: calc(100% - 32px);
@@ -617,6 +714,7 @@
   }
   #approval .q { font-weight: 700; font-size: 13px; }
   #approval .s { color: var(--dim); font-size: 12px; margin-top: 4px; word-break: break-word; }
+  #approval .d { color: var(--soft); font: 11px/1.45 var(--mono); margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
   #approval .row { display: flex; gap: 8px; margin-top: 10px; }
   #approval .row .btn { flex: 1; }
   .btn-danger { border-color: rgba(255,46,93,0.5); color: var(--error); }
@@ -755,6 +853,12 @@
       padding: 14px 10px calc(18px + env(safe-area-inset-bottom));
       overscroll-behavior: contain;
     }
+    #memory-page {
+      padding: 14px 10px calc(18px + env(safe-area-inset-bottom));
+      overscroll-behavior: contain;
+    }
+    .mem-grid { columns: 1; }
+    .mem-head-actions { flex-wrap: wrap; justify-content: flex-end; }
     .cal-day { min-height: 64px; padding: 4px; }
     .cal-chip .h { display: none; }
     .cal-month-label { min-width: 0; flex: 1; }
@@ -826,6 +930,8 @@
     .body pre { white-space: pre-wrap; overflow-wrap: anywhere; }
     #settings-page { padding-inline: 8px; }
     #calendar-page { padding-inline: 6px; }
+    #memory-page { padding-inline: 8px; }
+    .mem-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .cal-grid { gap: 3px; }
     .cal-chip { font-size: 10px; padding: 0 3px; }
     .settings-head { gap: 8px; }
@@ -886,6 +992,10 @@
     <div class="section-label">conversations</div>
     <div id="sessions"></div>
     <div class="drawer-footer">
+      <button class="btn" id="memory-open" type="button" style="width:100%;justify-content:flex-start;">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3.5l1.7 4.6 4.6 1.7-4.6 1.7L12 16.1l-1.7-4.6-4.6-1.7 4.6-1.7L12 3.5ZM18.7 15.4l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2ZM5.6 16.8l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6.6-1.6Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        Memory
+      </button>
       <button class="btn" id="calendar-open" type="button" style="width:100%;justify-content:flex-start;">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 19 20.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5ZM3.5 10h17M8 3.5v4M16 3.5v4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Calendar
@@ -985,9 +1095,37 @@
       </div>
     </section>
 
+    <section id="memory-page" hidden>
+      <div class="memory-inner">
+        <div class="settings-head">
+          <div>
+            <div class="settings-title">Memory</div>
+            <div class="settings-sub" id="mem-sub">Everything Sophie has learned about you.</div>
+          </div>
+          <div class="mem-head-actions">
+            <button type="button" class="mem-dream-btn" id="mem-dream" title="Run a dream pass now: consolidate, deduplicate, and tidy Sophie's memory">
+              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              Dream now
+            </button>
+            <button type="button" class="icon-btn" id="memory-close" aria-label="Close memory" title="Close memory">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="settings-status" id="mem-status"></div>
+        <div class="mem-stats" id="mem-stats"></div>
+        <div class="mem-toolbar">
+          <input type="search" class="mem-search" id="mem-search" placeholder="Search memories..." autocomplete="off">
+          <div class="mem-chips" id="mem-chips"></div>
+        </div>
+        <div class="mem-grid" id="mem-grid"></div>
+      </div>
+    </section>
+
     <div id="approval" hidden>
       <div class="q" id="approval-title"></div>
       <div class="s" id="approval-summary"></div>
+      <pre class="d" id="approval-details"></pre>
       <div class="row">
         <button class="btn btn-primary" id="approve">approve</button>
         <button class="btn btn-danger" id="deny">deny</button>
@@ -1062,6 +1200,9 @@
     settingsOpen: $("settings-open"), settingsClose: $("settings-close"), settingsPage: $("settings-page"),
     settingsNav: $("settings-nav"), settingsContent: $("settings-content"), settingsStatus: $("settings-status"),
     calendarOpen: $("calendar-open"), calendarClose: $("calendar-close"), calendarPage: $("calendar-page"),
+    memoryOpen: $("memory-open"), memoryClose: $("memory-close"), memoryPage: $("memory-page"),
+    memSub: $("mem-sub"), memStatus: $("mem-status"), memStats: $("mem-stats"),
+    memSearch: $("mem-search"), memChips: $("mem-chips"), memGrid: $("mem-grid"), memDream: $("mem-dream"),
     calSub: $("cal-sub"), calLabel: $("cal-label"), calStatus: $("cal-status"), calGrid: $("cal-grid"),
     calPrev: $("cal-prev"), calNext: $("cal-next"), calTodayBtn: $("cal-today"),
     dayModal: $("day-modal"), dayTitle: $("day-title"), dayBody: $("day-body"),
@@ -1069,7 +1210,7 @@
     health: $("health"), modeBadge: $("mode-badge"),
     audio: $("audio-btn"),
     messages: $("messages"), stream: $("stream"),
-    approval: $("approval"), approvalTitle: $("approval-title"), approvalSummary: $("approval-summary"),
+    approval: $("approval"), approvalTitle: $("approval-title"), approvalSummary: $("approval-summary"), approvalDetails: $("approval-details"),
     approve: $("approve"), deny: $("deny"),
     composer: $("composer"), input: $("input"), send: $("send"), scrollBottom: $("scroll-bottom"),
     attach: $("attach"), fileInput: $("file-input"), fileChips: $("file-chips"),
@@ -1086,6 +1227,8 @@
     settingsOpen: false, settingsSection: "model",
     calendarOpen: false, calCursor: new Date(), calEvents: [], calLoading: false,
     calSelectedDay: null, calEditing: null,
+    memoryOpen: false, memories: [], memDream: null, memLoading: false,
+    memFilter: "all", memQuery: "", memEditing: null, memDreaming: false,
     settings: null, models: null, modelsLoading: false,
     voices: [], voicesLoading: false, selectedVoice: "", testingVoice: "",
   };
@@ -1713,12 +1856,13 @@
   };
 
   function renderSettingsShell() {
-    const pageOpen = state.settingsOpen || state.calendarOpen;
+    const pageOpen = state.settingsOpen || state.calendarOpen || state.memoryOpen;
     els.messages.hidden = pageOpen;
     els.composer.hidden = pageOpen;
     els.approval.hidden = pageOpen || !state.pendingApproval;
     els.settingsPage.hidden = !state.settingsOpen;
     els.calendarPage.hidden = !state.calendarOpen;
+    els.memoryPage.hidden = !state.memoryOpen;
   }
 
   function setSettingsStatus(text) {
@@ -2021,10 +2165,11 @@
   function renderApproval() {
     const a = state.pendingApproval;
     els.approval.hidden = !a;
-    if (state.settingsOpen || state.calendarOpen) els.approval.hidden = true;
+    if (state.settingsOpen || state.calendarOpen || state.memoryOpen) els.approval.hidden = true;
     if (!a) return;
     els.approvalTitle.textContent = `approve ${a.call?.name ?? "tool"}?`;
     els.approvalSummary.textContent = a.call?.summary ?? "";
+    els.approvalDetails.textContent = a.call?.details ?? "No argument details available.";
   }
 
   function setState(next) {
@@ -2375,6 +2520,7 @@
   function openSettings() {
     state.settingsOpen = true;
     state.calendarOpen = false;
+    state.memoryOpen = false;
     closeDayModal();
     if (isMobileSidebar()) closeDrawer();
     setSettingsStatus("");
@@ -2391,6 +2537,236 @@
     renderSettingsShell();
     renderApproval();
     scrollDown(true);
+  }
+
+  /* ---------- memory ---------- */
+  const MEM_KINDS = {
+    user: { label: "About you", cls: "kind-user" },
+    preference: { label: "Preferences", cls: "kind-preference" },
+    environment: { label: "Environment", cls: "kind-environment" },
+    sophie: { label: "About Sophie", cls: "kind-sophie" },
+    procedure: { label: "Procedures", cls: "kind-procedure" },
+    failure: { label: "Failure patterns", cls: "kind-failure" },
+    convention: { label: "Conventions", cls: "kind-convention" },
+    fact: { label: "Facts", cls: "kind-fact" },
+  };
+  const memKind = (kind) => MEM_KINDS[kind] || MEM_KINDS.fact;
+  const setMemStatus = (text) => { els.memStatus.textContent = text || ""; };
+
+  function timeAgo(ms) {
+    if (!ms) return "";
+    const s = Math.max(0, Date.now() - ms) / 1000;
+    if (s < 90) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    if (s < 129600) return `${Math.round(s / 3600)}h ago`;
+    if (s < 5184000) return `${Math.round(s / 86400)}d ago`;
+    return `${Math.round(s / 2628000)}mo ago`;
+  }
+
+  function openMemory() {
+    state.memoryOpen = true;
+    state.settingsOpen = false;
+    state.calendarOpen = false;
+    state.memEditing = null;
+    closeDayModal();
+    if (isMobileSidebar()) closeDrawer();
+    setMemStatus("");
+    renderSettingsShell();
+    renderMemory();
+    void loadMemory();
+  }
+
+  function closeMemory() {
+    state.memoryOpen = false;
+    state.memEditing = null;
+    renderSettingsShell();
+    renderApproval();
+    scrollDown(true);
+  }
+
+  async function loadMemory() {
+    state.memLoading = true;
+    try {
+      const data = await getJson("/api/memory");
+      state.memories = data.memories || [];
+      state.memDream = data.dream || null;
+    } catch (err) {
+      setMemStatus(`Could not load memory: ${err.message}`);
+    } finally {
+      state.memLoading = false;
+    }
+    renderMemory();
+  }
+
+  function memFiltered() {
+    const q = state.memQuery.trim().toLowerCase();
+    return state.memories
+      .filter((m) => state.memFilter === "all" || m.kind === state.memFilter)
+      .filter((m) => !q || `${m.text} ${m.capsule} ${m.kind} ${m.source}`.toLowerCase().includes(q))
+      .sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0));
+  }
+
+  function renderMemory() {
+    if (!state.memoryOpen) return;
+    const all = state.memories;
+    els.memSub.textContent = all.length
+      ? "Everything Sophie has learned about you — click a memory to refine or forget it."
+      : "Sophie hasn't saved long-term memories yet; they appear here as you chat.";
+
+    els.memStats.innerHTML = "";
+    const recalled = all.reduce((n, m) => n + (m.useCount || 0), 0);
+    const dreamAt = state.memDream?.lastRunAt;
+    for (const s of [
+      { n: String(all.length), l: "memories" },
+      { n: String(all.filter((m) => m.scope === "project").length), l: "this project" },
+      { n: String(recalled), l: "recalls" },
+      { n: dreamAt ? timeAgo(dreamAt) : "never", l: "last dream" },
+    ]) {
+      const div = document.createElement("div");
+      div.className = "mem-stat";
+      const n = document.createElement("div"); n.className = "n"; n.textContent = s.n;
+      const l = document.createElement("div"); l.className = "l"; l.textContent = s.l;
+      div.append(n, l);
+      els.memStats.appendChild(div);
+    }
+
+    els.memChips.innerHTML = "";
+    const counts = {};
+    for (const m of all) counts[m.kind] = (counts[m.kind] || 0) + 1;
+    const chips = [
+      ["all", "All", all.length, ""],
+      ...Object.keys(MEM_KINDS).filter((k) => counts[k]).map((k) => [k, memKind(k).label, counts[k], memKind(k).cls]),
+    ];
+    for (const [key, label, count, cls] of chips) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `mem-chip ${cls}${state.memFilter === key ? " active" : ""}`;
+      btn.append(label);
+      const c = document.createElement("span"); c.className = "c"; c.textContent = String(count);
+      btn.appendChild(c);
+      btn.addEventListener("click", () => { state.memFilter = key; renderMemory(); });
+      els.memChips.appendChild(btn);
+    }
+
+    els.memGrid.innerHTML = "";
+    const rows = memFiltered();
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "mem-empty";
+      empty.textContent = state.memLoading
+        ? "Reading Sophie's memory..."
+        : all.length ? "Nothing matches that filter." : "No memories yet.";
+      els.memGrid.appendChild(empty);
+      return;
+    }
+    for (const m of rows) els.memGrid.appendChild(memCard(m));
+  }
+
+  function memMeta(m) {
+    const meta = document.createElement("div");
+    meta.className = "mem-meta";
+    const conf = document.createElement("span");
+    conf.className = "mem-conf";
+    conf.title = `confidence ${(m.confidence ?? 0).toFixed(2)}`;
+    const track = document.createElement("span"); track.className = "mem-conf-track";
+    const fill = document.createElement("span"); fill.className = "mem-conf-fill";
+    fill.style.width = `${Math.round(Math.max(0.06, Math.min(1, m.confidence ?? 0)) * 100)}%`;
+    track.appendChild(fill);
+    conf.appendChild(track);
+    meta.appendChild(conf);
+    const rec = document.createElement("span"); rec.textContent = `recalled ${m.useCount || 0}×`;
+    const src = document.createElement("span"); src.textContent = m.legacy ? "keyword fact" : `via ${m.source}`;
+    meta.append(rec, src);
+    return meta;
+  }
+
+  function memCard(m) {
+    const card = document.createElement("div");
+    card.className = `mem-card ${memKind(m.kind).cls}${state.memEditing === m.id ? " editing" : ""}`;
+
+    const top = document.createElement("div");
+    top.className = "mem-card-top";
+    const k = document.createElement("span"); k.className = "mem-kind"; k.textContent = m.kind;
+    top.appendChild(k);
+    if (m.scope === "project") {
+      const s = document.createElement("span"); s.className = "mem-scope"; s.textContent = "project";
+      top.appendChild(s);
+    }
+    const age = document.createElement("span"); age.className = "mem-age"; age.textContent = timeAgo(m.createdAt);
+    top.appendChild(age);
+    card.appendChild(top);
+
+    if (state.memEditing === m.id) {
+      const area = document.createElement("textarea");
+      area.className = "mem-edit-area";
+      area.value = m.text || m.capsule || "";
+      const actions = document.createElement("div");
+      actions.className = "mem-edit-actions";
+      const save = document.createElement("button"); save.type = "button"; save.className = "mem-btn mem-save"; save.textContent = "Save";
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "mem-btn"; cancel.textContent = "Cancel";
+      const del = document.createElement("button"); del.type = "button"; del.className = "mem-btn mem-delete"; del.textContent = "Forget";
+      save.addEventListener("click", () => void saveMemoryEdit(m, area.value));
+      cancel.addEventListener("click", () => { state.memEditing = null; renderMemory(); });
+      del.addEventListener("click", () => void forgetMemory(m));
+      actions.append(save, cancel, del);
+      card.append(area, actions, memMeta(m));
+      requestAnimationFrame(() => { area.focus(); area.setSelectionRange(area.value.length, area.value.length); });
+    } else {
+      const text = document.createElement("div"); text.className = "mem-text"; text.textContent = m.capsule || m.text;
+      card.append(text, memMeta(m));
+      card.addEventListener("click", () => { state.memEditing = m.id; renderMemory(); });
+    }
+    return card;
+  }
+
+  async function saveMemoryEdit(m, text) {
+    const clean = String(text || "").trim();
+    if (!clean) return void forgetMemory(m);
+    try {
+      await postJson(`/api/memory/${encodeURIComponent(m.id)}`, { text: clean });
+      state.memEditing = null;
+      setMemStatus("Memory updated.");
+      await loadMemory();
+    } catch (err) {
+      setMemStatus(err.message);
+    }
+  }
+
+  async function forgetMemory(m) {
+    if (!confirm("Forget this memory? Sophie won't recall it again.")) return;
+    try {
+      await deleteJson(`/api/memory/${encodeURIComponent(m.id)}`);
+      state.memEditing = null;
+      setMemStatus("Memory forgotten.");
+      await loadMemory();
+    } catch (err) {
+      setMemStatus(err.message);
+    }
+  }
+
+  async function dreamNow() {
+    if (state.memDreaming) return;
+    state.memDreaming = true;
+    els.memDream.classList.add("dreaming");
+    els.memDream.disabled = true;
+    setMemStatus("Sophie is dreaming — consolidating, deduplicating, and tidying her memory...");
+    try {
+      const { report } = await postJson("/api/memory/dream");
+      const cleaned =
+        report.sweep.duplicates + report.sweep.staleJunk + report.sweep.vague + report.sweep.expired +
+        report.review.dropped + report.review.merged + report.review.superseded + (report.legacyFactsMerged || 0);
+      setMemStatus(
+        `Dream complete: ${report.extracted} learned, ${cleaned} cleaned up, ${report.review.rewritten} rewritten` +
+        `${report.llmReviewed ? "" : " (model offline — quick tidy only)"}.`,
+      );
+      await loadMemory();
+    } catch (err) {
+      setMemStatus(`Dream failed: ${err.message}`);
+    } finally {
+      state.memDreaming = false;
+      els.memDream.classList.remove("dreaming");
+      els.memDream.disabled = false;
+    }
   }
 
   /* ---------- calendar ---------- */
@@ -2427,6 +2803,7 @@
   function openCalendar() {
     state.calendarOpen = true;
     state.settingsOpen = false;
+    state.memoryOpen = false;
     if (isMobileSidebar()) closeDrawer();
     renderSettingsShell();
     renderCalendar();
@@ -2867,6 +3244,10 @@
   els.settingsClose.addEventListener("click", closeSettings);
   els.calendarOpen.addEventListener("click", openCalendar);
   els.calendarClose.addEventListener("click", closeCalendar);
+  els.memoryOpen.addEventListener("click", openMemory);
+  els.memoryClose.addEventListener("click", closeMemory);
+  els.memDream.addEventListener("click", () => void dreamNow());
+  els.memSearch.addEventListener("input", () => { state.memQuery = els.memSearch.value; renderMemory(); });
   els.calPrev.addEventListener("click", () => shiftCalMonth(-1));
   els.calNext.addEventListener("click", () => shiftCalMonth(1));
   els.calTodayBtn.addEventListener("click", () => {

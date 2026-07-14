@@ -17,8 +17,9 @@ describe("durable daemon queue", () => {
     expect(nextWork()?.title).toBe("B");
     expect(listWork()[0]?.result).toBe("done");
     const b = nextWork()!;
-    updateWork(b.id, { status: "awaiting_approval", pendingApproval: { name: "notify", args: { message: "x" }, summary: "notify x", signature: 'notify:{"message":"x"}' } });
-    expect(approveWork(b.id)?.approvedSignature).toBe('notify:{"message":"x"}');
+    updateWork(b.id, { status: "awaiting_approval", pendingApproval: { name: "notify", args: { message: "x" }, summary: "notify x", argumentHash: "hash", signature: 'notify:{"message":"x"}' } });
+    expect(approveWork(b.id, "wrong")).toBeUndefined();
+    expect(approveWork(b.id, "hash")?.approvedSignature).toBe('notify:{"message":"x"}');
     expect(nextWork()?.id).toBe(b.id);
     const claimed = claimWork("test-worker", 1000)!;
     expect(claimed.leaseOwner).toBe("test-worker");

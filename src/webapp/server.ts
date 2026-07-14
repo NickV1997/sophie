@@ -28,6 +28,9 @@ import {
   type CalendarEvent,
 } from "../calendar/store.ts";
 import { calendarSyncStatus, syncCalendarEvent } from "../calendar/sync.ts";
+import { readDreamState, runDreamPass } from "../memory/dream.ts";
+import { deleteEngineMemory, listEngineMemories, updateEngineMemory } from "../memory/engine.ts";
+import { deleteFactMemory, listMemories, updateFactMemory } from "../memory/facts.ts";
 import { synthesizeToWav } from "../channels/notify.ts";
 import { ttsStatus } from "../tts/service.ts";
 import { IMAGE_EXTENSIONS, MAX_IMAGE_BYTES } from "../llm/image-files.ts";
@@ -397,6 +400,62 @@ class WebRuntime {
         const sync = await syncCalendarEvent(ev);
         return json({ event: getEvent(id) ?? ev, sync });
       }
+      // ── memory ── The webapp memory page: read everything Sophie believes,
+      // edit/delete individual records, and trigger a dream pass on demand.
+      if (req.method === "GET" && url.pathname === "/api/memory") {
+        const memories = listEngineMemories(this.cwd)
+          .filter((r) => !r.id.startsWith("legacy:"))
+          .map((r) => ({
+            id: r.id,
+            kind: r.kind,
+            scope: r.scope,
+            text: r.full,
+            capsule: r.capsule,
+            source: r.source,
+            confidence: r.confidence,
+            useCount: r.useCount,
+            evidence: r.evidence,
+            createdAt: r.createdAt,
+            lastUsedAt: r.lastUsedAt,
+          }));
+        const facts = (["user", "project"] as const).flatMap((scope) =>
+          listMemories(scope, this.cwd).map((r) => ({
+            id: r.id,
+            kind: r.type,
+            scope: scope === "user" ? "global" : "project",
+            text: r.text,
+            capsule: r.text,
+            source: "runtime",
+            confidence: r.salience,
+            useCount: r.useCount,
+            evidence: "keyword fact store",
+            createdAt: r.createdAt,
+            lastUsedAt: r.lastUsedAt,
+            legacy: true,
+          })),
+        );
+        return json({ memories: [...memories, ...facts], dream: readDreamState() });
+      }
+      if (req.method === "POST" && url.pathname === "/api/memory/dream") {
+        const server = await ping();
+        const report = await runDreamPass(this.cwd, { llm: server.ok });
+        return json({ report });
+      }
+      const memoryItem = url.pathname.match(/^\/api\/memory\/([^/]+)$/);
+      if (memoryItem && (req.method === "POST" || req.method === "DELETE")) {
+        const id = decodeURIComponent(memoryItem[1]!);
+        if (req.method === "DELETE") {
+          const removed = deleteEngineMemory(id, this.cwd) || deleteFactMemory(id, this.cwd);
+          return removed ? json({ ok: true }) : json({ error: "Memory not found." }, 404);
+        }
+        const body = await req.json().catch(() => ({}));
+        const text = typeof body?.text === "string" ? body.text.trim() : "";
+        if (!text) return json({ error: "Memory text is required." }, 400);
+        const updated = updateEngineMemory(id, text, this.cwd) ?? updateFactMemory(id, text, this.cwd);
+        if (!updated) return json({ error: "Memory not found, or the new text is too vague to keep." }, 404);
+        return json({ ok: true });
+      }
+
       if (req.method === "GET" && url.pathname === "/api/audio/voices") {
         return json({ voices: await listTtsVoices(), selected: this.audioVoice });
       }
