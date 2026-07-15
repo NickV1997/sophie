@@ -3,8 +3,8 @@
  *
  * For every failed check it labels: WHAT went wrong, WHY (the likely cause), and
  * WHERE in Sophie to fix it (concrete source files). Findings are grouped by
- * signature so the reader gets a deduplicated, prioritized fix list rather than 110
- * one-off notes.
+ * signature so the reader gets a deduplicated, prioritized fix list rather
+ * than 110 one-off notes.
  */
 
 import type { Complexity } from "./questions.ts";

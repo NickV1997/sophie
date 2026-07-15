@@ -72,7 +72,7 @@ models including **Qwen, GLM, Gemma, and GPT-OSS**.
 
 ```bash
 # 1. Get the code and install
-git clone <your-fork-url> sophie && cd sophie && ./install.sh
+git clone https://github.com/NickV1997/sophie.git sophie && cd sophie && ./install.sh
 
 # 2. Start a local model server (fastest path: Ollama)
 ollama pull qwen3 && ollama serve            # or use llama.cpp — see below
@@ -103,7 +103,7 @@ your own.
 **Steps**
 
 ```bash
-git clone <your-fork-url> sophie
+git clone https://github.com/NickV1997/sophie.git sophie
 cd sophie
 ./install.sh
 ```
@@ -118,8 +118,22 @@ cd sophie
 
 To skip the optional Python TTS environment, use
 `SOPHIE_INSTALL_TTS=0 ./install.sh`. Sophie itself and macOS speech continue to
-work without it. Kokoro autostart is off in a fresh configuration; enable it in
-`/setup` after installing its model files.
+work without it.
+
+**Optional neural voice (Kokoro).** The TTS sidecar needs two model files that
+are not bundled (~350 MB). Download `kokoro-v1.0.onnx` and `voices-v1.0.bin`
+from the [kokoro-onnx model releases](https://github.com/thewh1teagle/kokoro-onnx/releases)
+and place them in `~/.local/share/sophie/models/tts/`:
+
+```bash
+mkdir -p ~/.local/share/sophie/models/tts && cd ~/.local/share/sophie/models/tts
+curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+```
+
+If you keep model files somewhere else, set `SOPHIE_MODEL_DIR=/path/to/models`
+in `.env` (Sophie looks for `tts/kokoro-v1.0.onnx` under it), then set
+`SOPHIE_TTS_AUTOSTART=true`. `sophie doctor` confirms the files are found.
 
 If Bun's global bin dir isn't on your `PATH` yet, the installer prints the exact
 `export PATH=...` line to add to your shell profile (`~/.zshrc` / `~/.bashrc`).

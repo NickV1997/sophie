@@ -89,6 +89,13 @@ if [ "$TTS_SKIPPED" = false ] && [ -f "$TTS_VOICES" ]; then
 elif [ "$TTS_SKIPPED" = false ]; then
   yellow "• Kokoro voices missing: $TTS_VOICES"
 fi
+if [ "$TTS_SKIPPED" = false ] && { [ ! -f "$TTS_MODEL" ] || [ ! -f "$TTS_VOICES" ]; }; then
+  yellow "  Voice is optional. To enable it, download the two Kokoro files:"
+  yellow "    mkdir -p $TTS_MODEL_DIR/tts && cd $TTS_MODEL_DIR/tts"
+  yellow "    curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
+  yellow "    curl -LO https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+  yellow "  then set SOPHIE_TTS_AUTOSTART=true in .env (see README: Optional neural voice)."
+fi
 
 # 4. .env -----------------------------------------------------------------
 if [ ! -f .env ]; then

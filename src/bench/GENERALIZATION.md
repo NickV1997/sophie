@@ -62,7 +62,7 @@ bun run bench:generalization -- --scenario read-only-trap
   is meaningfully higher, the runtime has memorized the dev seed; that gap is
   a bug to remove, not a win to keep.
 
-## Rules (for humans and agents)
+## Rules
 
 1. **Never tune the runtime against a specific fresh seed.** If a fresh-seed
    run fails, reproduce on the dev seed or write a new template — do not patch
@@ -74,4 +74,5 @@ bun run bench:generalization -- --scenario read-only-trap
 4. If a template keeps failing across seeds, that is the benchmark working:
    it found a capability limit. Either the model improves, or the product
    accepts the limit honestly. Do not close the gap with routing regexes or
-   prompt aphorisms — see `sophie-no-benchmark-gaming` in project memory.
+   prompt aphorisms — that is how the previous fixed suite stopped measuring
+   anything.
