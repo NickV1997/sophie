@@ -56,6 +56,20 @@ describe("progressive tool disclosure", () => {
     expect(after).toContain("- assistant:");
   });
 
+  test("catalog keeps listing an active group whose schemas were narrowed out", () => {
+    // Regression: "check my contacts" auto-activated the assistant group
+    // (dropping it from the catalog) while intent focus hid its schemas —
+    // making the apple tool unreachable. With the disclosed-name set passed,
+    // any group with undisclosed tools must stay in the catalog.
+    activateToolGroups(["assistant"]);
+    expect(toolCatalogBlock()).not.toContain("- assistant:");
+    const narrowed = new Set(["people", "load_tools", "ask_user"]);
+    const catalog = toolCatalogBlock(narrowed);
+    expect(catalog).toContain("- assistant:");
+    const fullyDisclosed = new Set(TOOL_GROUPS.flatMap((g) => g.tools));
+    expect(toolCatalogBlock(fullyDisclosed)).toBe("");
+  });
+
   test("ungrouped tools are never hidden", () => {
     const disclosed = disclosedToolNames([...allNames(), "totally_new_tool"]);
     expect(disclosed.has("totally_new_tool")).toBe(true);

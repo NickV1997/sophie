@@ -13,7 +13,7 @@ import type { Tool } from "./types.ts";
 export const peopleTool: Tool = {
   name: "people",
   description:
-    "Manage contact context — roles, relationships, open threads, notes, and interaction history. Look up a person when you need context to decide what to write; skip it when the user already gave you the message text. Use to record interactions and track open items.",
+    "Sophie's own relationship notebook — roles, relationships, open threads, notes, and interaction history for people the user has told her about. NOT the Apple address book: for phone numbers and emails saved on this Mac, use the apple tool (contacts_lookup / contacts_list). Look up a person when you need context to decide what to write; skip it when the user already gave you the message text. Use to record interactions and track open items.",
   parameters: {
     type: "object",
     properties: {

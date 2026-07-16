@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import type { Tool, ToolResult } from "./types.ts";
@@ -7,10 +7,13 @@ import type { Tool, ToolResult } from "./types.ts";
  * apple — the macOS ecosystem bridge: Messages, Notes, Reminders, Contacts, and alarm-like alerts.
  *
  * Reads Messages straight from ~/Library/Messages/chat.db (fast, no Apple
- * events; needs Full Disk Access). Contact name resolution reads Contacts via
- * JXA (result cached for 5 minutes). Everything else goes through osascript:
- * JXA for Notes/Reminders (bulk property fetches) and classic AppleScript for
- * sending an iMessage.
+ * events; needs Full Disk Access). Contacts are read the same way — straight
+ * from the AddressBook sqlite stores — so lookups take milliseconds and work
+ * in any process with Full Disk Access (terminal, daemon, webapp host alike);
+ * JXA via the Contacts app is only the fallback when the stores are
+ * unreadable. Writes (create contact, send message, notes, reminders) go
+ * through osascript and additionally need Automation approval for the
+ * hosting process.
  */
 
 const OSA_TIMEOUT_MS = 45_000;
@@ -65,11 +68,101 @@ interface ContactMap {
 }
 
 let _contactCache: ContactMap | null = null;
+let _contactFailure: { message: string; expiresAt: number } | null = null;
+const CONTACT_FAILURE_TTL_MS = 30_000;
 
-/** Build a contact map from the Contacts app via JXA. Cached for 5 minutes. */
-async function getContactMap(signal?: AbortSignal): Promise<ContactMap> {
+interface ContactRow { name: string; phones: string[]; emails: string[] }
+
+const MOBILE_LABEL_PREF = ["mobile", "iphone", "cell", "main"];
+
+function mobileLabelRank(label: string): number {
+  const rank = MOBILE_LABEL_PREF.findIndex((pref) => label.toLowerCase().includes(pref));
+  return rank === -1 ? 99 : rank;
+}
+
+/** Read contacts straight from the AddressBook sqlite stores (~ms; needs only
+ *  Full Disk Access — the same grant Messages already requires, so any process
+ *  that can read texts can also resolve contacts). Returns null when no store
+ *  could be read so the caller can fall back to JXA via the Contacts app. */
+export async function readContactRowsFromSqlite(): Promise<ContactRow[] | null> {
+  const dir = join(homedir(), "Library", "Application Support", "AddressBook");
+  const candidates: string[] = [];
+  const root = join(dir, "AddressBook-v22.abcddb");
+  if (existsSync(root)) candidates.push(root);
+  const sourcesDir = join(dir, "Sources");
+  if (existsSync(sourcesDir)) {
+    let entries: string[] = [];
+    try { entries = readdirSync(sourcesDir); } catch { /* unreadable without FDA — JXA fallback */ }
+    for (const entry of entries) {
+      const path = join(sourcesDir, entry, "AddressBook-v22.abcddb");
+      if (existsSync(path)) candidates.push(path);
+    }
+  }
+  if (!candidates.length) return null;
+  const { Database } = await import("bun:sqlite");
+  // The root store and each Source hold overlapping account data; merge by
+  // name so one contact synced through two accounts stays one entry.
+  const merged = new Map<string, ContactRow>();
+  let readAny = false;
+  for (const path of candidates) {
+    try {
+      const db = new Database(path, { readonly: true });
+      try {
+        const people = db.query(
+          "SELECT Z_PK AS pk, ZFIRSTNAME AS fn, ZLASTNAME AS ln, ZNICKNAME AS nn FROM ZABCDRECORD " +
+          "WHERE ZFIRSTNAME IS NOT NULL OR ZLASTNAME IS NOT NULL OR ZNICKNAME IS NOT NULL",
+        ).all() as { pk: number; fn: string | null; ln: string | null; nn: string | null }[];
+        const phoneRows = db.query(
+          "SELECT ZOWNER AS owner, ZFULLNUMBER AS value, COALESCE(ZLABEL, '') AS label, COALESCE(ZORDERINGINDEX, 0) AS idx " +
+          "FROM ZABCDPHONENUMBER WHERE ZFULLNUMBER IS NOT NULL",
+        ).all() as { owner: number; value: string; label: string; idx: number }[];
+        const emailRows = db.query(
+          "SELECT ZOWNER AS owner, ZADDRESS AS value FROM ZABCDEMAILADDRESS WHERE ZADDRESS IS NOT NULL",
+        ).all() as { owner: number; value: string }[];
+        const phonesByOwner = new Map<number, { value: string; label: string; idx: number }[]>();
+        for (const row of phoneRows) {
+          const list = phonesByOwner.get(row.owner) ?? [];
+          list.push(row);
+          phonesByOwner.set(row.owner, list);
+        }
+        const emailsByOwner = new Map<number, string[]>();
+        for (const row of emailRows) {
+          const list = emailsByOwner.get(row.owner) ?? [];
+          list.push(row.value);
+          emailsByOwner.set(row.owner, list);
+        }
+        for (const person of people) {
+          const name = `${person.fn ?? ""} ${person.ln ?? ""}`.trim() || (person.nn ?? "").trim();
+          if (!name) continue;
+          const phones = (phonesByOwner.get(person.pk) ?? [])
+            .sort((a, b) => mobileLabelRank(a.label) - mobileLabelRank(b.label) || a.idx - b.idx)
+            .map((item) => item.value);
+          const emails = emailsByOwner.get(person.pk) ?? [];
+          const existing = merged.get(name.toLowerCase());
+          if (existing) {
+            for (const value of phones) if (!existing.phones.includes(value)) existing.phones.push(value);
+            for (const value of emails) if (!existing.emails.includes(value)) existing.emails.push(value);
+          } else {
+            merged.set(name.toLowerCase(), { name, phones: [...phones], emails: [...emails] });
+          }
+        }
+        readAny = true;
+      } finally {
+        db.close();
+      }
+    } catch { /* this store is unreadable (no FDA) or its schema moved — try the next */ }
+  }
+  return readAny ? [...merged.values()] : null;
+}
+
+/** JXA fallback: ask the Contacts app for every person. Slow (launches the
+ *  app, one Apple event per property) and needs Automation approval, but
+ *  works without Full Disk Access. Throws with guidance on failure — a failed
+ *  read must never masquerade as an empty address book, or a permission
+ *  problem becomes a confident "no contact found". */
+async function readContactRowsFromJxa(signal?: AbortSignal): Promise<ContactRow[]> {
   const now = Date.now();
-  if (_contactCache && now < _contactCache.expiresAt) return _contactCache;
+  if (_contactFailure && now < _contactFailure.expiresAt) throw new Error(_contactFailure.message);
 
   // One JXA call that returns all people+phones+emails as JSON.
   // Phones are sorted so mobile/cell/iPhone labels come first.
@@ -90,35 +183,53 @@ async function getContactMap(signal?: AbortSignal): Promise<ContactMap> {
     "}catch(e){}}" +
     "return JSON.stringify(rows);}";
 
-  const res = await runOsa(script, { lang: "JavaScript", signal });
+  let res = await runOsa(script, { lang: "JavaScript", signal });
+  // The first query after Contacts cold-launches can fail with no output;
+  // one retry absorbs the launch instead of reporting a phantom failure.
+  if (!res.ok && !signal?.aborted) res = await runOsa(script, { lang: "JavaScript", signal });
+  if (!res.ok) {
+    const message = `Could not read the Apple address book: ${osaGuidance(res.err || "osascript produced no output.")}`;
+    _contactFailure = { message, expiresAt: now + CONTACT_FAILURE_TTL_MS };
+    throw new Error(message);
+  }
+  try {
+    return res.out ? (JSON.parse(res.out) as ContactRow[]) : [];
+  } catch {
+    return []; // corrupt JSON — treat as empty rather than crash
+  }
+}
+
+/** Build the lookup map (handle→name, name→handles), sqlite first, JXA
+ *  fallback. Cached for 5 minutes. Throws with guidance when neither path
+ *  can read the address book. */
+async function getContactMap(signal?: AbortSignal): Promise<ContactMap> {
+  const now = Date.now();
+  if (_contactCache && now < _contactCache.expiresAt) return _contactCache;
+
+  const rows = (await readContactRowsFromSqlite()) ?? (await readContactRowsFromJxa(signal));
 
   const phones = new Map<string, string>();
   const emails = new Map<string, string>();
   const byName = new Map<string, { name: string; phones: string[]; emails: string[] }>();
-
-  if (res.ok && res.out) {
-    try {
-      const rows = JSON.parse(res.out) as { name: string; phones: string[]; emails: string[] }[];
-      for (const row of rows) {
-        const { name, phones: phs, emails: ems } = row;
-        byName.set(name.toLowerCase(), row);
-        for (const ph of phs) {
-          if (!ph) continue;
-          phones.set(ph, name);
-          const digits = ph.replace(/\D/g, "");
-          if (digits) {
-            phones.set(digits, name);
-            if (digits.length > 10) phones.set(digits.slice(-10), name);
-          }
-        }
-        for (const em of ems) {
-          if (em) emails.set(em.toLowerCase(), name);
-        }
+  for (const row of rows) {
+    const { name, phones: phs, emails: ems } = row;
+    byName.set(name.toLowerCase(), row);
+    for (const ph of phs) {
+      if (!ph) continue;
+      phones.set(ph, name);
+      const digits = ph.replace(/\D/g, "");
+      if (digits) {
+        phones.set(digits, name);
+        if (digits.length > 10) phones.set(digits.slice(-10), name);
       }
-    } catch { /* corrupt JSON — cache will be empty but won't crash */ }
+    }
+    for (const em of ems) {
+      if (em) emails.set(em.toLowerCase(), name);
+    }
   }
 
   _contactCache = { phones, emails, byName, expiresAt: now + CONTACT_CACHE_TTL_MS };
+  _contactFailure = null;
   return _contactCache;
 }
 
@@ -309,9 +420,11 @@ async function messagesSend(args: Record<string, any>, signal?: AbortSignal): Pr
 
   // If 'to' looks like a name rather than a phone/email, resolve it via Contacts.
   if (!looksLikeAddress(to)) {
-    const contactMap = await getContactMap(signal).catch(() => null);
-    if (!contactMap) {
-      return { content: "Could not load Contacts to resolve the name. Try passing the phone number directly.", isError: true };
+    let contactMap: ContactMap;
+    try {
+      contactMap = await getContactMap(signal);
+    } catch (err) {
+      return { content: `${contactsAccessHelp(err)} Or pass the phone number directly.`, isError: true };
     }
     const matches = searchByName(to, contactMap);
     if (!matches.length) {
@@ -370,21 +483,82 @@ async function messagesSend(args: Record<string, any>, signal?: AbortSignal): Pr
 async function contactsLookup(args: Record<string, any>, signal?: AbortSignal): Promise<ToolResult> {
   const query = String(args.name ?? "").trim();
   if (!query) return { content: "contacts_lookup needs a 'name'.", isError: true };
-  const contactMap = await getContactMap(signal).catch(() => null);
-  if (!contactMap) {
-    return { content: "Could not load Contacts. Make sure your terminal has Contacts access in System Settings → Privacy & Security → Contacts.", isError: true };
+  let contactMap: ContactMap;
+  try {
+    contactMap = await getContactMap(signal);
+  } catch (err) {
+    return { content: contactsAccessHelp(err), isError: true };
   }
   const matches = searchByName(query, contactMap);
-  if (!matches.length) return { content: `No contact found matching "${query}".`, display: "0 matches" };
-  const lines = matches.map((m) => {
-    const phones = m.phones.length ? m.phones.join(", ") : "(no phone)";
-    const emails = m.emails.length ? ` | email: ${m.emails.join(", ")}` : "";
-    return `${m.name}: ${phones}${emails}`;
-  });
+  if (!matches.length) return { content: `No contact found matching "${query}". Use contacts_list to browse the whole address book.`, display: "0 matches" };
+  const lines = matches.map(renderContact);
   return {
     content: `Contacts matching "${query}":\n${lines.join("\n")}`,
     display: `${matches.length} match${matches.length === 1 ? "" : "es"}`,
   };
+}
+
+/** One honest error for an unreadable address book: the real failure plus the
+ *  permission the hosting process (terminal, daemon, …) most likely lacks. */
+function contactsAccessHelp(err: unknown): string {
+  return `${(err as Error)?.message ?? err} Whatever app runs Sophie needs approval under System Settings → Privacy & Security → Automation → Contacts.`;
+}
+
+function renderContact(m: { name: string; phones: string[]; emails: string[] }): string {
+  const phones = m.phones.length ? m.phones.join(", ") : "(no phone)";
+  const emails = m.emails.length ? ` | email: ${m.emails.join(", ")}` : "";
+  return `${m.name}: ${phones}${emails}`;
+}
+
+async function contactsList(args: Record<string, any>, signal?: AbortSignal): Promise<ToolResult> {
+  let contactMap: ContactMap;
+  try {
+    contactMap = await getContactMap(signal);
+  } catch (err) {
+    return { content: contactsAccessHelp(err), isError: true };
+  }
+  const all = [...contactMap.byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  if (!all.length) {
+    return { content: "The Apple address book returned no contacts. If it isn't actually empty, grant your terminal Contacts access in System Settings → Privacy & Security → Contacts.", display: "0 contacts" };
+  }
+  const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200);
+  const offset = Math.max(Number(args.offset) || 0, 0);
+  const page = all.slice(offset, offset + limit);
+  const more = offset + page.length < all.length
+    ? `\n…${all.length - offset - page.length} more — call contacts_list with offset:${offset + page.length}.`
+    : "";
+  return {
+    content: `Apple Contacts (${offset + 1}–${offset + page.length} of ${all.length}, alphabetical):\n${page.map(renderContact).join("\n")}${more}`,
+    display: `${all.length} contacts`,
+  };
+}
+
+async function contactsCreate(args: Record<string, any>, signal?: AbortSignal): Promise<ToolResult> {
+  const name = String(args.name ?? "").trim();
+  const phone = String(args.phone ?? "").trim();
+  const email = String(args.email ?? "").trim();
+  if (!name) return { content: "contacts_create needs a 'name'.", isError: true };
+  if (!phone && !email) return { content: "contacts_create needs a 'phone' and/or 'email' to save.", isError: true };
+  const existing = await getContactMap(signal).then((map) => searchByName(name, map)).catch(() => []);
+  const exact = existing.find((m) => m.name.toLowerCase() === name.toLowerCase());
+  if (exact) {
+    return { content: `A contact named "${exact.name}" already exists — not creating a duplicate:\n${renderContact(exact)}`, isError: true };
+  }
+  const [first, ...rest] = name.split(/\s+/);
+  const script =
+    "function run(argv){" +
+    'const app=Application("Contacts");' +
+    "const p=app.Person({firstName:argv[0],lastName:argv[1]});" +
+    "app.people.push(p);" +
+    'if(argv[2])p.phones.push(app.Phone({label:"mobile",value:argv[2]}));' +
+    'if(argv[3])p.emails.push(app.Email({label:"home",value:argv[3]}));' +
+    "app.save();" +
+    'return "ok";}';
+  const res = await runOsa(script, { lang: "JavaScript", args: [first ?? "", rest.join(" "), phone, email], signal });
+  if (!res.ok) return { content: `Could not save the contact: ${osaGuidance(res.err)}`, isError: true };
+  _contactCache = null; // the new contact must be visible to the next lookup
+  const saved = [phone, email].filter(Boolean).join(", ");
+  return { content: `Saved "${name}" to Apple Contacts (${saved}).`, display: `saved ${name}` };
 }
 
 // ── Notes (JXA) ──────────────────────────────────────────────────────────────
@@ -859,6 +1033,47 @@ async function alarmsCancel(args: Record<string, any>, signal?: AbortSignal): Pr
   return remindersComplete({ name: args.name ?? args.title, list: ALARM_LIST }, signal);
 }
 
+// ── capability diagnostics ───────────────────────────────────────────────────
+
+export interface AppleCapability { name: string; ok: boolean; detail: string }
+
+/** Diagnostic probes for the macOS grants the apple tool depends on, executed
+ *  from THIS process. Grants attach to the hosting app (user terminal vs
+ *  launchd daemon vs webapp host), so run them from the process being
+ *  debugged: `sophie doctor` probes its terminal, the daemon probes itself at
+ *  startup. Automation probes pop a one-time approval dialog and LAUNCH each
+ *  target app — that is the point during setup/doctor (approve once and the
+ *  grant sticks for that host), but unattended callers like the daemon should
+ *  pass automation:false rather than open five apps at every boot. */
+export async function appleCapabilityChecks(opts: { automation?: boolean } = {}): Promise<AppleCapability[]> {
+  if (platform() !== "darwin") return [];
+  const checks: AppleCapability[] = [];
+
+  try {
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(join(homedir(), "Library", "Messages", "chat.db"), { readonly: true });
+    try { db.query("SELECT ROWID FROM message LIMIT 1").get(); } finally { db.close(); }
+    checks.push({ name: "messages (read)", ok: true, detail: "chat.db readable — Full Disk Access OK" });
+  } catch {
+    checks.push({ name: "messages (read)", ok: false, detail: "chat.db unreadable — grant this app Full Disk Access (System Settings → Privacy & Security)" });
+  }
+
+  const rows = await readContactRowsFromSqlite();
+  checks.push(rows
+    ? { name: "contacts (read)", ok: true, detail: `${rows.length} contacts readable from the AddressBook store` }
+    : { name: "contacts (read)", ok: false, detail: "AddressBook store unreadable — without Full Disk Access, lookups fall back to slow Contacts automation" });
+
+  if (opts.automation ?? true) {
+    for (const app of ["Contacts", "Messages", "Notes", "Reminders", "Calendar"]) {
+      const res = await runOsa(`tell application "${app}" to return name`);
+      checks.push(res.ok
+        ? { name: `${app.toLowerCase()} automation (write)`, ok: true, detail: "approved" }
+        : { name: `${app.toLowerCase()} automation (write)`, ok: false, detail: osaGuidance(res.err || "no output — approval dialog may be pending") });
+    }
+  }
+  return checks;
+}
+
 // ── the tool ─────────────────────────────────────────────────────────────────
 
 export const apple: Tool = {
@@ -867,7 +1082,9 @@ export const apple: Tool = {
   description:
     "macOS ecosystem bridge — Contacts, iMessage, Notes, Reminders, and Apple-backed alarm alerts.\n" +
     "Actions:\n" +
-    "• contacts_lookup — search Contacts by name → get phone numbers / emails (messages_send resolves names itself; only use this to preview matches before sending)\n" +
+    "• contacts_lookup — find a contact in the Apple address book by name → phone numbers and emails\n" +
+    "• contacts_list — browse the whole Apple address book, alphabetical and paged (limit/offset)\n" +
+    "• contacts_create — save a new contact (name + phone and/or email) to the Apple address book\n" +
     "• messages_recent — recent iMessages; optional 'chat' filter by name/number; shows saved contact names\n" +
     "• messages_search — search message bodies by keyword\n" +
     "• messages_send — send an iMessage; 'to' can be a contact name (resolved automatically), phone number, or email\n" +
@@ -892,7 +1109,7 @@ export const apple: Tool = {
       action: {
         type: "string",
         enum: [
-          "contacts_lookup",
+          "contacts_lookup", "contacts_list", "contacts_create",
           "messages_recent", "messages_search", "messages_send",
           "notes_list", "notes_read", "notes_create", "notes_append", "notes_replace",
           "notes_rename", "notes_delete", "notes_move", "notes_search",
@@ -903,7 +1120,9 @@ export const apple: Tool = {
         description: "What to do.",
       },
       // contacts
-      name: { type: "string", description: "contacts_lookup: name to search for. reminders_create/update/complete: reminder name." },
+      name: { type: "string", description: "contacts_lookup: name to search for. contacts_create: full name to save. reminders_create/update/complete: reminder name." },
+      phone: { type: "string", description: "contacts_create: phone number to save." },
+      email: { type: "string", description: "contacts_create: email address to save." },
       // messages
       chat: { type: "string", description: "messages_recent: filter by contact name, number, or group name." },
       keyword: { type: "string", description: "messages_search / notes_search: text to search for." },
@@ -913,7 +1132,8 @@ export const apple: Tool = {
         description:
           "messages_send: the message text. Write as Sophie the assistant relay; I/me/my refer to Sophie.",
       },
-      limit: { type: "number", description: "Max items to return (messages/notes/reminders lists)." },
+      limit: { type: "number", description: "Max items to return (messages/notes/reminders/contacts lists)." },
+      offset: { type: "number", description: "contacts_list: start index for paging (default 0)." },
       // notes
       title: { type: "string", description: "Note title. For read/append/replace/rename/delete/move: partial match. For create: exact title." },
       body: { type: "string", description: "notes_create / notes_append / notes_replace: body text. Supports markdown: **bold**, *italic*, - bullets, 1. lists, ## headings, `code`, [text](url), ~~strike~~." },
@@ -931,6 +1151,8 @@ export const apple: Tool = {
   summarize: (a) => {
     const action = String(a.action ?? "");
     if (action === "contacts_lookup") return `contacts: ${a.name}`;
+    if (action === "contacts_list") return "contacts list";
+    if (action === "contacts_create") return `save contact "${a.name}"`;
     if (action === "messages_send") return `iMessage → ${a.to}`;
     if (action === "messages_recent") return a.chat ? `messages · ${a.chat}` : "recent messages";
     if (action === "messages_search") return `messages search: ${a.keyword}`;
@@ -946,6 +1168,7 @@ export const apple: Tool = {
   risk: (a) => {
     if ([
       "messages_send",
+      "contacts_create",
       "notes_create", "notes_append", "notes_replace", "notes_rename", "notes_delete", "notes_move",
       "folders_create",
       "reminders_create", "reminders_update", "reminders_complete",
@@ -958,6 +1181,8 @@ export const apple: Tool = {
     const action = String(args.action ?? "");
     switch (action) {
       case "contacts_lookup":    return contactsLookup(args, ctx.signal);
+      case "contacts_list":      return contactsList(args, ctx.signal);
+      case "contacts_create":    return contactsCreate(args, ctx.signal);
       case "messages_recent":    return messagesRecent(args, ctx.signal);
       case "messages_search":    return messagesSearch(args, ctx.signal);
       case "messages_send":      return messagesSend(args, ctx.signal);

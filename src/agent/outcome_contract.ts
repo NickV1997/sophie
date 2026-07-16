@@ -23,6 +23,10 @@ export const ENFORCEABLE_OUTCOMES: Record<string, string> = {
   "email:list_unread": "read current unread email with email(action:'list_unread') before reporting inbox status",
   "email:draft_create": "save the requested draft with email(action:'draft_create'); do not merely print it inline",
   "email:draft_list": "read saved email drafts with email(action:'draft_list') before reporting their status",
+  "apple:messages_recent": "read recent iMessages with apple(action:'messages_recent') before reporting on texts",
+  "apple:messages_send": "send the requested iMessage with apple(action:'messages_send'); do not merely print it",
+  "apple:contacts_lookup": "look the person up in the Apple address book with apple(action:'contacts_lookup') before reporting contact details",
+  "apple:contacts_create": "save the requested contact to the Apple address book with apple(action:'contacts_create')",
   "schedule:add": "create the requested reminder with schedule(action:'add')",
   notify: "deliver the requested notification with notify",
   "manage_tasks:add": "add the requested durable task(s) with manage_tasks(action:'add')",
@@ -47,6 +51,8 @@ export const ENFORCEABLE_OUTCOMES: Record<string, string> = {
  * contract mutates state. */
 export const READ_ONLY_OUTCOME_PREFIXES = new Set([
   "activity",
+  "apple:messages_recent",
+  "apple:contacts_lookup",
   "calendar_find_free",
   "email:list_unread",
   "email:draft_list",

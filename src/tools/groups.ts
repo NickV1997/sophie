@@ -82,7 +82,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
   {
     name: "assistant",
     description:
-      "math, notify, reminders/calendar, email, files/watch, clipboard/open/http, voice, documents, Apple Messages/Notes/Reminders, people/projects/delegation",
+      "math, notify, reminders/calendar, email, files/watch, clipboard/open/http, voice, documents, Apple contacts/Messages/Notes/Reminders, people/projects/delegation",
     tools: [
       "calc",
       "notify",
@@ -192,15 +192,23 @@ export function disclosedToolNames(allNames: Iterable<string>): Set<string> {
   return disclosed;
 }
 
-/** Compact catalog of the still-deferred groups, appended to the tools block. */
-export function toolCatalogBlock(): string {
-  const deferred = TOOL_GROUPS.filter((g) => !active.has(g.name));
-  if (!deferred.length) return "";
+/** Compact catalog of the tool groups the model cannot currently see in full,
+ *  appended to the tools block. When the round's disclosed-name set is given,
+ *  a group is listed whenever ANY of its tools is missing from the prompt —
+ *  even if the group is already active — because intent-focus narrowing can
+ *  hide an active group's schemas; the load_tools escape hatch must stay
+ *  visible or a routing miss leaves the tool unreachable. Without the set,
+ *  fall back to activation state alone. */
+export function toolCatalogBlock(disclosedNames?: ReadonlySet<string>): string {
+  const hidden = TOOL_GROUPS.filter((g) =>
+    disclosedNames ? g.tools.some((t) => !disclosedNames.has(t)) : !active.has(g.name),
+  );
+  if (!hidden.length) return "";
   return [
     "",
     "# More tools (deferred)",
     "Call load_tools(group) when a deferred group is needed; direct calls also auto-activate the group.",
-    ...deferred.map((g) => `- ${g.name}: ${g.description}`),
+    ...hidden.map((g) => `- ${g.name}: ${g.description}`),
   ].join("\n");
 }
 

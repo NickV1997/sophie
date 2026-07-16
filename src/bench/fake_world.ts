@@ -155,6 +155,8 @@ function fakeApple(state: FakeWorldState, action: string, args: Record<string, a
   if (action === "messages_search") return { content: messageLines(state.messages.filter((message) => lower(message.body).includes(lower(args.keyword)))) };
   if (action === "messages_send") return { content: `Fake iMessage sent to ${args.to}.`, display: "fake sent" };
   if (action === "contacts_lookup") return { content: `${args.name} | fake@example.com | +1-555-0100` };
+  if (action === "contacts_list") return { content: "Apple Contacts (1–2 of 2, alphabetical):\nAlex Fake: +1-555-0100 | email: alex@example.com\nBailey Fake: +1-555-0101 | email: bailey@example.com" };
+  if (action === "contacts_create") return { content: `Saved "${args.name}" to Apple Contacts (${[args.phone, args.email].filter(Boolean).join(", ")}).`, display: `saved ${args.name}` };
   return { content: `Fake Apple ${action} completed.` };
 }
 

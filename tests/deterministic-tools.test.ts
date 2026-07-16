@@ -63,11 +63,27 @@ describe("deterministic tool execution", () => {
 
   test("fills intent-model-selected briefing sources in order", () => {
     const input = "Review today's calendar, unread email, and recent messages";
-    const intent = intentWith(["email", "apple", "calendar_list"]);
+    const intent: TurnIntent = {
+      ...intentWith(["email", "apple", "calendar_list"]),
+      requiredOutcomes: [{
+        prefix: "apple:messages_recent",
+        minimum: 1,
+        instruction: ENFORCEABLE_OUTCOMES["apple:messages_recent"]!,
+      }],
+    };
     expect(deterministicToolCallForMissingInput(input, intent, new Set())?.name).toBe("email");
     expect(deterministicToolCallForMissingInput(input, intent, new Set(["email"]))?.name).toBe("apple");
-    expect(deterministicToolCallForMissingInput(input, intent, new Set(["email", "apple"]))?.name).toBe("calendar_list");
+    expect(deterministicToolCallForMissingInput(input, intent, new Set(["email", "apple", "apple:messages_recent"]))?.name).toBe("calendar_list");
     expect(deterministicToolCallsForMissingInput(input, intent, new Set()).map((c) => c.name)).toEqual(["email", "apple", "calendar_list"]);
+  });
+
+  test("an apple turn without a messages contract is left to the model", () => {
+    // Regression: "find a contact in my phone Kurt Butler" routed to apple and
+    // the runtime pre-ran messages_recent, satisfying the routing hint without
+    // ever touching the address book. The apple tool spans four stores — no
+    // messages contract, no deterministic messages read.
+    const intent = intentWith(["apple"]);
+    expect(deterministicToolCallForMissingInput("Find a contact in my phone Kurt Butler", intent, new Set())).toBeNull();
   });
 
   test("reads saved drafts when the semantic contract requires draft status", () => {

@@ -92,6 +92,15 @@ async function doctor(): Promise<void> {
     process.stdout.write(`model server: ${status.detail}\n`);
   }
 
+  if (process.platform === "darwin") {
+    const { appleCapabilityChecks } = await import("../src/tools/apple.ts");
+    process.stdout.write("\nmacOS permissions for THIS process (grants attach to the hosting app — the daemon reports its own at startup, see `sophie daemon status`):\n");
+    for (const check of await appleCapabilityChecks()) {
+      if (!check.ok) ok = false;
+      process.stdout.write(`  ${check.ok ? "ok     " : "MISSING"} ${check.name}: ${check.detail}\n`);
+    }
+  }
+
   process.exit(ok ? 0 : 1);
 }
 
@@ -140,7 +149,12 @@ if (args[0] === "daemon") {
   if (action === "install") { const path = installLaunchAgent(); process.stdout.write(`Installed ${path}\nRun: sophie daemon start\n`); process.exit(0); }
   if (action === "start") { const p = Bun.spawnSync(["launchctl", "bootstrap", `gui/${process.getuid?.() ?? 0}`, PLIST_PATH]); process.stdout.write(p.stderr.toString() || "Sophie daemon started.\n"); process.exit(p.exitCode); }
   if (action === "stop") { const p = Bun.spawnSync(["launchctl", "bootout", `gui/${process.getuid?.() ?? 0}/${DAEMON_LABEL}`]); process.stdout.write(p.stderr.toString() || "Sophie daemon stopped.\n"); process.exit(p.exitCode); }
-  const s = readDaemonStatus(); process.stdout.write(s ? `Sophie daemon: ${s.state}, pid ${s.pid}, heartbeat ${new Date(s.heartbeatAt).toLocaleString()}\n` : "Sophie daemon: offline\n"); process.exit(s?.state === "online" && Date.now() - s.heartbeatAt < 45_000 ? 0 : 1);
+  const s = readDaemonStatus(); process.stdout.write(s ? `Sophie daemon: ${s.state}, pid ${s.pid}, heartbeat ${new Date(s.heartbeatAt).toLocaleString()}\n` : "Sophie daemon: offline\n");
+  if (s?.permissions?.length) {
+    process.stdout.write("macOS permissions for the daemon process (Telegram/webapp turns run here):\n");
+    for (const p of s.permissions) process.stdout.write(`  ${p.ok ? "ok     " : "MISSING"} ${p.name}: ${p.detail}\n`);
+  }
+  process.exit(s?.state === "online" && Date.now() - s.heartbeatAt < 45_000 ? 0 : 1);
 }
 
 if (args[0] === "secrets" && args[1] === "migrate") {

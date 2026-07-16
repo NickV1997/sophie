@@ -68,6 +68,7 @@ describe("personal-assistant outcome contracts", () => {
       confidence: 0.85,
       restrictTools: false,
       expectedTools: ["weather", "email", "apple", "calendar_list"],
+      requiredOutcomes: [req("apple:messages_recent")],
     };
     const calls = deterministicToolCallsForMissingInput("Review today's calendar, unread email, recent messages, and weather.", intent, new Set());
     expect(calls.map((c) => c.name)).toEqual(["weather", "email", "apple", "calendar_list"]);

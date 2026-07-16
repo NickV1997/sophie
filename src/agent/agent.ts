@@ -622,7 +622,7 @@ export class Agent {
         : { ...intent, expectedTools: activeExpectedTools };
       const allToolNames = toolSpecs().map((spec) => spec.name);
       const artifacts = protocolArtifacts(toolProtocol, disclosedSpecs, allToolNames, config.toolGrammar);
-      const toolsBlock = artifacts.toolsBlock + toolCatalogBlock();
+      const toolsBlock = artifacts.toolsBlock + toolCatalogBlock(disclosedNames);
       // Sampler-level constraint on tool-call syntax (llama.cpp lazy grammar).
       // Built over ALL registered tools, not just the disclosed ones, so the
       // deferred-tool escape hatch is never blocked by the grammar.

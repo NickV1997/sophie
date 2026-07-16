@@ -80,12 +80,23 @@ export function deterministicToolCallForMissingInput(
 }
 
 function deterministicReadStillNeeded(tool: string, intent: TurnIntent, alreadySucceeded: ReadonlySet<string>): boolean {
-  if (tool !== "email") return !alreadySucceeded.has(tool);
-  const requiredReads = ["email:list_unread", "email:draft_list"]
-    .filter((prefix) => intent.requiredOutcomes?.some((outcome) => outcome.prefix === prefix));
-  return requiredReads.length
-    ? requiredReads.some((prefix) => !alreadySucceeded.has(prefix))
-    : !alreadySucceeded.has(tool);
+  if (tool === "email") {
+    const requiredReads = ["email:list_unread", "email:draft_list"]
+      .filter((prefix) => intent.requiredOutcomes?.some((outcome) => outcome.prefix === prefix));
+    return requiredReads.length
+      ? requiredReads.some((prefix) => !alreadySucceeded.has(prefix))
+      : !alreadySucceeded.has(tool);
+  }
+  if (tool === "apple") {
+    // The apple tool spans contacts, messages, notes, and reminders — there is
+    // no safe default read. Pre-running messages_recent on a contacts or notes
+    // turn both wastes the round and satisfies the routing hint, letting the
+    // model answer without ever touching the store the user asked about. Only
+    // preflight when the turn's contract explicitly requires a messages read.
+    return intent.requiredOutcomes?.some((outcome) => outcome.prefix === "apple:messages_recent") === true
+      && !alreadySucceeded.has("apple:messages_recent");
+  }
+  return !alreadySucceeded.has(tool);
 }
 
 function writeFileCallForInput(input: string): DeterministicToolCall | null {

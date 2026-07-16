@@ -20,13 +20,14 @@ import { SPINNER, theme } from "./theme.ts";
  * sophie" message and captures the chat id automatically.
  */
 
-type Group = "You" | "Model" | "Speech" | "Telegram" | "Email" | "Presence" | "Search" | "Advanced";
+type Group = "You" | "Model" | "Speech" | "Telegram" | "Email" | "Presence" | "Search" | "Advanced" | "Permissions";
 
 type Step =
   | { kind: "welcome" }
   | { kind: "review" }
   | { kind: "info"; group: Group; title: string; help?: string; lines: string[] }
   | { kind: "telegram"; group: Group; title: string }
+  | { kind: "permissions"; group: Group; title: string }
   | {
       kind: "text";
       key: string;
@@ -153,6 +154,12 @@ const STEPS: Step[] = [
   { kind: "number", key: "SOPHIE_TIMEOUT_MS", group: "Advanced", title: "Request timeout (ms)",
     help: "Local models can be slow to first token; 600000 = 10 minutes." },
 
+  // Last real step: trigger every macOS grant Sophie needs while the user is
+  // still in setup, instead of failing one tool at a time later. macOS only.
+  ...(process.platform === "darwin"
+    ? [{ kind: "permissions", group: "Permissions", title: "Grant Sophie access to your Mac" } as Step]
+    : []),
+
   { kind: "review" },
 ];
 
@@ -207,6 +214,9 @@ function mask(value: string): string {
 
 type TgStatus = "idle" | "waiting" | "done" | "skipped" | "failed";
 
+type PermStatus = "idle" | "checking" | "done";
+interface PermCheck { name: string; ok: boolean; detail: string }
+
 export function SetupWizard({
   firstRun,
   onDone,
@@ -219,6 +229,9 @@ export function SetupWizard({
   const [selCursor, setSelCursor] = useState(0);
   const [notice, setNotice] = useState("");
   const [tgStatus, setTgStatus] = useState<TgStatus>("idle");
+  const [permStatus, setPermStatus] = useState<PermStatus>("idle");
+  const [permChecks, setPermChecks] = useState<PermCheck[]>([]);
+  const permWarnedRef = useRef(false);
   const captureRef = useRef<AbortController | null>(null);
   const savedRef = useRef(false);
 
@@ -317,10 +330,38 @@ export function SetupWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index]);
 
+  // ── Permission probing: runs when we land on the permissions step. The
+  // automation probes pop macOS approval dialogs — this IS the grant flow.
+  const runPermissionChecks = useCallback(async () => {
+    setPermStatus("checking");
+    try {
+      const { appleCapabilityChecks } = await import("../tools/apple.ts");
+      setPermChecks(await appleCapabilityChecks());
+    } catch {
+      setPermChecks([]);
+    }
+    setPermStatus("done");
+  }, []);
+
+  useEffect(() => {
+    if (step.kind === "permissions" && permStatus === "idle") void runPermissionChecks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index]);
+
   const goNext = useCallback(() => {
     if (step.kind === "review") {
       save();
       return;
+    }
+    // Missing grants don't hard-block setup, but they do require a second
+    // Enter so nobody skips the screen without seeing what will be broken.
+    if (step.kind === "permissions") {
+      const missing = permChecks.filter((c) => !c.ok);
+      if (missing.length && !permWarnedRef.current) {
+        permWarnedRef.current = true;
+        setNotice(`${missing.length} grant${missing.length === 1 ? "" : "s"} still missing — those features will fail until granted. Enter again to continue anyway.`);
+        return;
+      }
     }
     // Profile questions are required — Enter on a blank one doesn't advance.
     if ("key" in step && PROFILE_KEYS.has(step.key) && !(values[step.key] ?? "").trim()) {
@@ -333,7 +374,7 @@ export function SetupWizard({
     }
     captureRef.current?.abort();
     setIndex((i) => Math.min(total - 1, i + 1));
-  }, [step, save, total, values]);
+  }, [step, save, total, values, permChecks]);
 
   const goBack = useCallback(() => {
     captureRef.current?.abort();
@@ -369,6 +410,20 @@ export function SetupWizard({
     }
     // Text/number steps: the focused <input> owns typing + Enter (→ onSubmit).
     if (isText) return;
+
+    if (step.kind === "permissions") {
+      if (key.name === "r" && permStatus !== "checking") {
+        void runPermissionChecks();
+        return;
+      }
+      if (key.name === "o") {
+        // Full Disk Access has no consent dialog — the user must flip the
+        // switch themselves, so take them straight to the right pane.
+        Bun.spawn(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"], { stdout: "ignore", stderr: "ignore" });
+        setNotice("Opened System Settings → Full Disk Access. Enable your terminal app there, then press r to re-check.");
+        return;
+      }
+    }
 
     if (step.kind === "toggle") {
       if (key.name === "up" || key.name === "down") {
@@ -415,6 +470,8 @@ export function SetupWizard({
           values={values}
           selCursor={selCursor}
           tgStatus={tgStatus}
+          permStatus={permStatus}
+          permChecks={permChecks}
           setValue={setValue}
           onSubmit={goNext}
         />
@@ -455,6 +512,8 @@ function StepBody({
   values,
   selCursor,
   tgStatus,
+  permStatus,
+  permChecks,
   setValue,
   onSubmit,
 }: {
@@ -462,6 +521,8 @@ function StepBody({
   values: Record<string, string>;
   selCursor: number;
   tgStatus: TgStatus;
+  permStatus: PermStatus;
+  permChecks: PermCheck[];
   setValue: (key: string, value: string) => void;
   onSubmit: () => void;
 }) {
@@ -548,6 +609,8 @@ function StepBody({
           <OptionList options={step.options} cursor={selCursor} />
         ) : step.kind === "telegram" ? (
           <TelegramLink status={tgStatus} chatId={values.TELEGRAM_CHAT_ID ?? ""} />
+        ) : step.kind === "permissions" ? (
+          <PermissionsGrant status={permStatus} checks={permChecks} />
         ) : null}
       </box>
     </box>
@@ -709,5 +772,62 @@ function footerHint(step: Step, firstRun: boolean, index: number): string {
   const back = index > 0 ? "Ctrl+B back · " : "";
   const cancel = firstRun ? "" : index === 0 ? "Esc cancel · " : "Esc back · ";
   if (step.kind === "review") return `${back}${cancel}Enter/Ctrl+S save & finish · Ctrl+C quit`;
+  if (step.kind === "permissions") return `${back}${cancel}r re-check · o open Full Disk Access settings · Enter continue`;
   return `${back}${cancel}Ctrl+S save now with defaults · Ctrl+C quit`;
+}
+
+function PermissionsGrant({ status, checks }: { status: PermStatus; checks: PermCheck[] }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (status !== "checking") return;
+    const t = setInterval(() => setTick((x) => x + 1), 100);
+    return () => clearInterval(t);
+  }, [status]);
+
+  if (status !== "done") {
+    const frame = SPINNER[tick % SPINNER.length];
+    return (
+      <box style={{ flexDirection: "column" }}>
+        <text fg={theme.soft} wrapMode="word">
+          Sophie is probing what this Mac lets her reach — contacts, texts, notes, reminders,
+          calendar. macOS will pop approval dialogs for each app she may control:{" "}
+          <span fg={theme.pinkSoft}>click OK on each one</span>. Approve once and it sticks.
+        </text>
+        <box style={{ paddingTop: 1, flexDirection: "row" }}>
+          <text fg={theme.green}>{`${frame} `}</text>
+          <text fg={theme.pinkSoft}>Checking permissions… watch for macOS dialogs.</text>
+        </box>
+      </box>
+    );
+  }
+
+  const missing = checks.filter((c) => !c.ok);
+  return (
+    <box style={{ flexDirection: "column" }}>
+      {checks.map((c) => (
+        <text key={c.name} wrapMode="none">
+          <span fg={c.ok ? theme.green : theme.warn}>{c.ok ? "  ✓ " : "  ✗ "}</span>
+          <span fg={c.ok ? theme.soft : theme.text}>{c.name.padEnd(28)}</span>
+          <span fg={c.ok ? theme.faint : theme.warn}>{c.ok ? "granted" : "missing"}</span>
+        </text>
+      ))}
+      <box style={{ paddingTop: 1 }}>
+        {missing.length ? (
+          <text fg={theme.soft} wrapMode="word">
+            {missing.some((c) => c.name.includes("(read)"))
+              ? "Reading texts and contacts needs Full Disk Access, which macOS never asks for on its own: press o to open System Settings, switch ON your terminal app, then press r to re-check. "
+              : ""}
+            {missing.some((c) => c.name.includes("automation"))
+              ? "For the missing automation grants, press r and approve the dialogs (or allow them under System Settings → Privacy & Security → Automation). "
+              : ""}
+            Telegram and web-app use runs in its own process — its host asks for the same grants once, and `sophie daemon status` shows what it got.
+          </text>
+        ) : (
+          <text fg={theme.green} wrapMode="word">
+            Everything granted — Sophie can read and act on contacts, texts, notes, reminders, and calendar from this terminal.
+          </text>
+        )}
+      </box>
+    </box>
+  );
 }
